@@ -917,7 +917,7 @@ async function renderSeason(){
   const loaded = await Promise.all(gamesIndex.map(g => loadGame(g.id)));
   const allGames = loaded.filter(g => g && !g.excludeFromSeason);
   const totals = {};
-  roster.players.forEach(p => totals[p.id] = { pts:0, oreb:0, dreb:0, to:0, fouls:0, seconds:0, fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0, games:new Set() });
+  roster.players.forEach(p => totals[p.id] = { pts:0, oreb:0, dreb:0, stl:0, blk:0, to:0, fouls:0, seconds:0, fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0, plusMinus:0, games:new Set() });
   allGames.forEach(g => {
     Object.entries(g.stats).forEach(([pid, s]) => {
       if(!totals[pid]) return;
@@ -926,11 +926,13 @@ async function renderSeason(){
         const qs = s[q];
         totals[pid].pts += playerPoints(qs);
         totals[pid].oreb += qs.oreb; totals[pid].dreb += qs.dreb;
+        totals[pid].stl += (qs.stl||0); totals[pid].blk += (qs.blk||0);
         totals[pid].to += qs.to; totals[pid].fouls += qs.fouls;
         totals[pid].seconds += qs.seconds;
         totals[pid].fgm2 += qs.fgm2; totals[pid].fga2 += qs.fga2;
         totals[pid].fgm3 += qs.fgm3; totals[pid].fga3 += qs.fga3;
         totals[pid].ftm += qs.ftm; totals[pid].fta += qs.fta;
+        totals[pid].plusMinus += (qs.plusMinus||0);
         if(qs.seconds>0) playedThisGame = true;
       });
       if(playedThisGame) totals[pid].games.add(g.id);
@@ -947,8 +949,8 @@ async function renderSeason(){
     const mpg = gp ? fmtClock(Math.round(t.seconds/gp)) : '00:00';
     return `<tr>
       <td>${escapeHtml(p.name)}</td><td>${gp}</td><td>${t.pts}</td><td>${ppg}</td>
-      <td>${t.oreb+t.dreb}</td><td>${t.to}</td><td>${t.fouls}</td>
-      <td>${fg2pct}%</td><td>${fg3pct}%</td><td>${ftpct}%</td><td>${mpg}</td>
+      <td>${t.oreb+t.dreb}</td><td>${t.stl}</td><td>${t.blk}</td><td>${t.to}</td><td>${t.fouls}</td>
+      <td>${fg2pct}%</td><td>${fg3pct}%</td><td>${ftpct}%</td><td>${mpg}</td><td>${t.plusMinus>=0?'+':''}${t.plusMinus}</td>
     </tr>`;
   }).join('');
 
@@ -959,7 +961,7 @@ async function renderSeason(){
     ${excludedCount > 0 ? `<div class="section-label" style="margin-top:-0.4rem;">${excludedCount} game${excludedCount===1?'':'s'} excluded from these totals</div>` : ''}
     ${allGames.length===0 ? `<div class="empty"><span class="ball">🏀</span>No games recorded yet this season.</div>` : `
     <div class="table-wrap"><table>
-      <tr><th>Player</th><th>GP</th><th>PTS</th><th>PPG</th><th>REB</th><th>TO</th><th>FLS</th><th>2P%</th><th>3P%</th><th>FT%</th><th>MPG</th></tr>
+      <tr><th>Player</th><th>GP</th><th>PTS</th><th>PPG</th><th>REB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>2P%</th><th>3P%</th><th>FT%</th><th>MPG</th><th>+/-</th></tr>
       ${rows}
     </table></div>`}
   </div>`;
