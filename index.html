@@ -173,7 +173,7 @@
 <body>
 
 <div class="storage-banner" id="storageBanner">
-  ⚠️ Can't reach the database right now. Check that the Apps Script deployment is still active and set to "Anyone" access — your entries won't be saved until it's reachable.
+  ⚠️ Can't reach the database right now. Check your internet connection and that the Firestore security rules allow access — your entries won't be saved until it's reachable.
 </div>
 <div class="topbar">
   <div class="brand">
@@ -193,35 +193,33 @@
 
 <main id="app"></main>
 
-<script>
-/* ---------------------------------------------------------------
-   STORAGE HELPERS — backed by a Google Sheet via Apps Script
---------------------------------------------------------------- */
-const DB_URL = 'https://script.google.com/macros/s/AKfycbx1Eq3LmGCzSa7ZvKc5-KLBGY_w4Y4L1cwXn2_EkEm9HqUBIu0w4rlcJo8fhwgbnYu4/exec';
-const storageAvailable = !!DB_URL;
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
-async function dbGet_(key){
-  const url = DB_URL + '?key=' + encodeURIComponent(key);
-  const res = await fetch(url);
-  if(!res.ok) throw new Error('HTTP ' + res.status + ' from database');
-  return await res.json();
-}
-// text/plain avoids a CORS preflight, which Apps Script web apps don't handle by default.
-async function dbPost_(body){
-  const res = await fetch(DB_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(body)
-  });
-  if(!res.ok) throw new Error('HTTP ' + res.status + ' from database');
-  return await res.json();
-}
+/* ---------------------------------------------------------------
+   STORAGE HELPERS — backed by Firestore
+--------------------------------------------------------------- */
+const firebaseConfig = {
+  apiKey: "AIzaSyAfZZBIPQWFFgKN9T1L8r_JaAnC87KyBqM",
+  authDomain: "bball-scorekeeper.firebaseapp.com",
+  projectId: "bball-scorekeeper",
+  storageBucket: "bball-scorekeeper.firebasestorage.app",
+  messagingSenderId: "133539827196",
+  appId: "1:133539827196:web:9aaba7eb66e3266bdc3679",
+  measurementId: "G-KLP8P3FK3K"
+};
+const fbApp = initializeApp(firebaseConfig);
+const db = getFirestore(fbApp);
+const STORAGE_COLLECTION = 'storage'; // one doc per key, mirrors the old get/set(key,value) shape
+
+const storageAvailable = true;
 
 async function loadJSON(key, fallback){
-  if(!storageAvailable) return fallback;
   try{
-    const data = await dbGet_(key);
-    if(data && data.found) {
+    const snap = await getDoc(doc(db, STORAGE_COLLECTION, key));
+    if(snap.exists()){
+      const data = snap.data();
       try{ return JSON.parse(data.value); }catch(e){ return data.value; }
     }
     return fallback;
@@ -232,11 +230,9 @@ async function loadJSON(key, fallback){
 }
 // Returns {ok:boolean, error?:string}
 async function saveJSON(key, value){
-  if(!storageAvailable) return { ok:false, error:'No database URL configured' };
   try{
-    const data = await dbPost_({ action:'set', key, value: JSON.stringify(value) });
-    if(data && data.ok) return { ok:true };
-    return { ok:false, error: (data && data.error) ? data.error : 'Sheet did not confirm the write' };
+    await setDoc(doc(db, STORAGE_COLLECTION, key), { value: JSON.stringify(value), updatedAt: Date.now() });
+    return { ok:true };
   }catch(e){
     console.error('save failed', key, e);
     return { ok:false, error: (e && e.message) ? e.message : String(e) };
@@ -308,7 +304,7 @@ const gameCache = {}; // id -> game object, avoids refetching games already load
 
 function queueSaveGame(){
   clearTimeout(saveDebounce);
-  saveDebounce = setTimeout(flushGame, 1200);
+  saveDebounce = setTimeout(flushGame, 500);
 }
 async function flushGame(){
   if(!currentGame) return;
@@ -344,7 +340,7 @@ function updateIndexSummary(){
 async function init(){
   let dbReachable = true;
   try{
-    await dbGet_('roster'); // connectivity probe
+    await getDoc(doc(db, STORAGE_COLLECTION, 'roster')); // connectivity probe
   }catch(e){
     dbReachable = false;
     console.error('database unreachable at startup', e);
@@ -790,12 +786,12 @@ function startClock(){
       if(currentGame.stats[pid]) currentGame.stats[pid][q].seconds++;
     });
     updateClockDisplayOnly();
-    // Note: does NOT save every tick — Google Sheets isn't built for
-    // per-second writes. A slower autosave interval below covers the clock,
-    // and every stat/roster action still saves promptly on its own.
+    // Note: still doesn't save every single tick, just to keep write volume
+    // sane — the 4s autosave interval below covers the clock, and every
+    // stat/roster action saves promptly (500ms debounce) on its own.
   }, 1000);
   clearInterval(autosaveTimer);
-  autosaveTimer = setInterval(flushGame, 10000);
+  autosaveTimer = setInterval(flushGame, 4000);
 }
 function pauseClock(){
   currentGame.clockRunning = false;
