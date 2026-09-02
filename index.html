@@ -112,6 +112,7 @@
     display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:0.5rem;
   }
   .sb-team{text-align:center;}
+  .sb-team .sb-tag{font-size:0.6rem; letter-spacing:0.12em; color:var(--wood-light); font-weight:700; margin-bottom:0.1rem;}
   .sb-team .label{font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--paper-dim); margin-bottom:0.15rem;}
   .sb-team .score{font-family:'Space Mono',monospace; font-size:2.4rem; font-weight:700; color:var(--accent); line-height:1;}
   .sb-mid{text-align:center;}
@@ -285,7 +286,7 @@ const emptyQuarterStat = () => ({ fgm2:0, fga2:0, fgm3:0, fga3:0, ftm:0, fta:0, 
 const QUARTERS = ['q1','q2','q3','q4','ot'];
 const QLABELS = {q1:'Q1', q2:'Q2', q3:'Q3', q4:'Q4', ot:'OT'};
 
-function newGame(opponent, date){
+function newGame(opponent, date, homeAway){
   const id = 'g_' + Date.now();
   const stats = {};
   roster.players.forEach(p => {
@@ -293,10 +294,12 @@ function newGame(opponent, date){
   });
   return {
     id, opponent, date, final:false,
+    homeAway: homeAway === 'away' ? 'away' : 'home', // whether OUR team is home or away
+    excludeFromSeason:false,
     currentQuarter:'q1',
     clockRunning:false,
     onCourt: [],
-    awayByQuarter:{q1:0,q2:0,q3:0,q4:0,ot:0},
+    awayByQuarter:{q1:0,q2:0,q3:0,q4:0,ot:0}, // opponent's score by quarter (name kept for minimal diff — unrelated to homeAway)
     stats
   };
 }
@@ -351,7 +354,8 @@ function updateIndexSummary(){
   const idx = gamesIndex.findIndex(g => g.id === currentGame.id);
   const summary = {
     id: currentGame.id, date: currentGame.date, opponent: currentGame.opponent,
-    homeScore: homeScore(currentGame), awayScore: awayScore(currentGame), final: currentGame.final
+    homeScore: homeScore(currentGame), awayScore: awayScore(currentGame), final: currentGame.final,
+    homeAway: currentGame.homeAway, excludeFromSeason: currentGame.excludeFromSeason
   };
   if(idx >= 0) gamesIndex[idx] = summary; else gamesIndex.unshift(summary);
 }
@@ -417,15 +421,19 @@ function renderTeamSelector(){
   ).join('');
 }
 
+// Shared team-switch logic — used by both the top-bar selector and the
+// inline selector on the Live Game tab so they always stay in sync.
+async function switchTeam(newId){
+  if(!newId || newId === activeTeamId) return;
+  activeTeamId = newId;
+  await saveJSON('active-team-id', activeTeamId);
+  await loadTeamData();
+  renderTeamSelector();
+  render();
+}
+
 function bindTeamSwitcher(){
-  document.getElementById('teamSelector').addEventListener('change', async (e) => {
-    const newId = e.target.value;
-    if(newId === activeTeamId) return;
-    activeTeamId = newId;
-    await saveJSON('active-team-id', activeTeamId);
-    await loadTeamData();
-    render();
-  });
+  document.getElementById('teamSelector').addEventListener('change', (e) => switchTeam(e.target.value));
   document.getElementById('newTeamBtn').addEventListener('click', async () => {
     const name = prompt('New team name:');
     if(!name || !name.trim()) return;
@@ -517,15 +525,28 @@ function renderRoster(){
    LIVE GAME TAB
 --------------------------------------------------------------- */
 function renderLive(){
+  const teamPicker = `
+  <div class="card" style="padding:0.75rem 1rem;">
+    <label style="margin-bottom:0.3rem;">Team</label>
+    <select id="liveTeamSelector">
+      ${teams.map(t => `<option value="${escapeAttr(t.id)}" ${t.id===activeTeamId?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}
+    </select>
+  </div>`;
+
   if(!currentGame){
-    return `
+    return teamPicker + `
     <div class="card">
       <h2>Start a new game</h2>
-      ${roster.players.length===0 ? `<div class="empty"><span class="ball">🏀</span>Add players to your roster first.</div>` : `
+      ${roster.players.length===0 ? `<div class="empty"><span class="ball">🏀</span>Add players to ${escapeHtml(currentTeamName())}'s roster first.</div>` : `
       <label>Opponent</label>
       <input type="text" id="oppInput" placeholder="Opponent team name">
       <label>Date</label>
       <input type="date" id="dateInput" value="${new Date().toISOString().slice(0,10)}">
+      <label>${escapeHtml(currentTeamName())} is playing</label>
+      <select id="homeAwaySelect">
+        <option value="home">Home</option>
+        <option value="away">Away</option>
+      </select>
       <button class="btn block" id="startGameBtn">Tip off</button>
       `}
     </div>`;
@@ -568,15 +589,15 @@ function renderLive(){
     </div>`;
   }).join('');
 
-  return `
+  return teamPicker + `
   <div class="storage-banner" id="liveSaveWarning">⚠️ The last stat update didn't save — check your connection. Keep playing; I'll keep retrying, but write down the score as backup.</div>
   <div class="scoreboard">
-    <div class="sb-team"><div class="label">${escapeHtml(currentTeamName())}</div><div class="score mono">${hs}</div></div>
+    <div class="sb-team"><div class="sb-tag">${g.homeAway==='away'?'AWAY':'HOME'}</div><div class="label">${escapeHtml(currentTeamName())}</div><div class="score mono">${hs}</div></div>
     <div class="sb-mid">
       <div class="clock mono" id="clockDisplay">${fmtClock(g.stats[roster.players[0]?.id]?.[q]?.seconds ?? 0)}</div>
       <div class="qtag">${QLABELS[q]}${g.clockRunning?' · LIVE':''}</div>
     </div>
-    <div class="sb-team"><div class="label">${escapeHtml(g.opponent||'Opponent')}</div><div class="score mono">${as}</div></div>
+    <div class="sb-team"><div class="sb-tag">${g.homeAway==='away'?'HOME':'AWAY'}</div><div class="label">${escapeHtml(g.opponent||'Opponent')}</div><div class="score mono">${as}</div></div>
   </div>
 
   <div class="card">
@@ -611,10 +632,11 @@ function renderHistory(){
     <h2>Season schedule</h2>
     ${rows.map(g => {
       const res = g.final ? (g.homeScore>g.awayScore?'W':(g.homeScore<g.awayScore?'L':'T')) : 'LIVE';
+      const prefix = g.homeAway==='away' ? '@' : 'vs';
       return `<div class="game-row" data-view-game="${g.id}">
         <div>
-          <div class="opp">vs ${escapeHtml(g.opponent||'Opponent')}</div>
-          <div class="date">${g.date||''}</div>
+          <div class="opp">${prefix} ${escapeHtml(g.opponent||'Opponent')}</div>
+          <div class="date">${g.date||''}${g.excludeFromSeason ? ' · <span class="pill" style="background:var(--panel-2);color:var(--paper-dim);">Excluded</span>' : ''}</div>
         </div>
         <div class="res ${res}">${g.homeScore}–${g.awayScore} · ${res}</div>
       </div>`;
@@ -643,12 +665,20 @@ async function renderGameDetail(gameId){
     return `<tr><td>${QLABELS[q]}</td><td>${homeQ}</td><td>${g.awayByQuarter[q]||0}</td></tr>`;
   }).join('');
 
+  const prefix = g.homeAway==='away' ? '@' : 'vs';
+  const usTag = g.homeAway==='away' ? 'Away' : 'Home';
+  const oppTag = g.homeAway==='away' ? 'Home' : 'Away';
+
   box.innerHTML = `
   <div class="card">
     <button class="backlink" id="closeDetail">← Back to schedule</button>
-    <h2>${escapeHtml(currentTeamName())} vs ${escapeHtml(g.opponent||'Opponent')} — ${g.date||''}</h2>
+    <h2>${escapeHtml(currentTeamName())} ${prefix} ${escapeHtml(g.opponent||'Opponent')} — ${g.date||''}</h2>
+    <div style="display:flex; gap:0.5rem; margin-bottom:0.9rem;">
+      <button class="btn secondary" id="toggleExcludeBtn">${g.excludeFromSeason ? 'Include in season stats' : 'Exclude from season stats'}</button>
+      <button class="btn danger" id="deleteGameBtn">Delete game</button>
+    </div>
     <div class="section-label">Score by quarter</div>
-    <div class="table-wrap"><table><tr><th>Qtr</th><th>${escapeHtml(currentTeamName())}</th><th>${escapeHtml(g.opponent||'Opp')}</th></tr>${quarterTable}
+    <div class="table-wrap"><table><tr><th>Qtr</th><th>${escapeHtml(currentTeamName())} (${usTag})</th><th>${escapeHtml(g.opponent||'Opp')} (${oppTag})</th></tr>${quarterTable}
       <tr><th>Total</th><th>${homeScore(g)}</th><th>${awayScore(g)}</th></tr></table></div>
     <div class="section-label">Box score</div>
     <div class="table-wrap"><table>
@@ -656,6 +686,33 @@ async function renderGameDetail(gameId){
       ${rows}
     </table></div>
   </div>`;
+
+  document.getElementById('toggleExcludeBtn').onclick = async () => {
+    g.excludeFromSeason = !g.excludeFromSeason;
+    const res = await saveJSON(gameKey(g.id), g);
+    gameCache[g.id] = g;
+    if(g.id === currentGame?.id) currentGame.excludeFromSeason = g.excludeFromSeason;
+    const idx = gamesIndex.findIndex(x => x.id === g.id);
+    if(idx >= 0) gamesIndex[idx].excludeFromSeason = g.excludeFromSeason;
+    await persistGamesIndex();
+    if(!res.ok){ alert('Could not save: ' + res.error); g.excludeFromSeason = !g.excludeFromSeason; }
+    renderGameDetail(g.id);
+  };
+  document.getElementById('deleteGameBtn').onclick = async () => {
+    if(!confirm('Delete this game permanently? This cannot be undone.')) return;
+    await deleteDoc(doc(db, STORAGE_COLLECTION, gameKey(g.id))).catch(()=>{});
+    gamesIndex = gamesIndex.filter(x => x.id !== g.id);
+    await persistGamesIndex();
+    delete gameCache[g.id];
+    if(currentGame?.id === g.id){
+      currentGame = null;
+      activeGameId = null;
+      await saveJSON(teamKey('active-game-id'), null);
+    }
+    document.getElementById('gameDetail').innerHTML = '';
+    render();
+  };
+  document.getElementById('closeDetail').onclick = () => { document.getElementById('gameDetail').innerHTML=''; };
 }
 
 /* ---------------------------------------------------------------
@@ -667,7 +724,7 @@ async function renderSeason(){
   // Fetch every game in parallel instead of one-by-one — much faster over
   // a network API like Apps Script, where each call has real latency.
   const loaded = await Promise.all(gamesIndex.map(g => loadGame(g.id)));
-  const allGames = loaded.filter(Boolean);
+  const allGames = loaded.filter(g => g && !g.excludeFromSeason);
   const totals = {};
   roster.players.forEach(p => totals[p.id] = { pts:0, oreb:0, dreb:0, to:0, fouls:0, seconds:0, fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0, games:new Set() });
   allGames.forEach(g => {
@@ -704,9 +761,11 @@ async function renderSeason(){
     </tr>`;
   }).join('');
 
+  const excludedCount = gamesIndex.length - allGames.length;
   app.innerHTML = `
   <div class="card">
     <h2>${escapeHtml(currentTeamName())} — season totals</h2>
+    ${excludedCount > 0 ? `<div class="section-label" style="margin-top:-0.4rem;">${excludedCount} game${excludedCount===1?'':'s'} excluded from these totals</div>` : ''}
     ${allGames.length===0 ? `<div class="empty"><span class="ball">🏀</span>No games recorded yet this season.</div>` : `
     <div class="table-wrap"><table>
       <tr><th>Player</th><th>GP</th><th>PTS</th><th>PPG</th><th>REB</th><th>TO</th><th>FLS</th><th>2P%</th><th>3P%</th><th>FT%</th><th>MPG</th></tr>
@@ -719,6 +778,10 @@ async function renderSeason(){
    EVENT HANDLERS
 --------------------------------------------------------------- */
 function attachHandlers(){
+  // Live tab's inline team picker (mirrors the top-bar selector)
+  const liveTeamSel = document.getElementById('liveTeamSelector');
+  if(liveTeamSel) liveTeamSel.onchange = (e) => switchTeam(e.target.value);
+
   // Roster
   const saveTeamBtn = document.getElementById('saveTeamName');
   if(saveTeamBtn) saveTeamBtn.onclick = async () => {
@@ -786,7 +849,8 @@ function attachHandlers(){
   if(startBtn) startBtn.onclick = async () => {
     const opp = document.getElementById('oppInput').value.trim() || 'Opponent';
     const date = document.getElementById('dateInput').value;
-    currentGame = newGame(opp, date);
+    const homeAway = document.getElementById('homeAwaySelect').value;
+    currentGame = newGame(opp, date, homeAway);
     activeGameId = currentGame.id;
     await saveJSON(teamKey('active-game-id'), activeGameId);
     updateIndexSummary();
@@ -876,8 +940,6 @@ function attachHandlers(){
   document.querySelectorAll('[data-view-game]').forEach(row => {
     row.onclick = () => renderGameDetail(row.dataset.viewGame);
   });
-  const closeDetail = document.getElementById('closeDetail');
-  if(closeDetail) closeDetail.onclick = () => { document.getElementById('gameDetail').innerHTML=''; };
 }
 
 /* ---------------------------------------------------------------
