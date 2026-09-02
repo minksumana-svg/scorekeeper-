@@ -92,6 +92,15 @@
     font-size:0.75rem; margin-right:0.5rem;
   }
   .icon-btn{background:none; border:none; color:var(--miss); font-size:1.1rem; padding:0.2rem 0.4rem;}
+  .team-switcher{display:flex; align-items:center; gap:0.4rem;}
+  .team-switcher select{
+    background:var(--panel); border:1px solid var(--wood); color:var(--paper);
+    padding:0.4rem 2rem 0.4rem 0.6rem; border-radius:8px; font-size:0.82rem; font-weight:600; max-width:150px;
+  }
+  .icon-btn-plus{
+    background:var(--wood); color:var(--ink); border:none; width:1.9rem; height:1.9rem; flex-shrink:0;
+    border-radius:50%; font-weight:700; font-size:1.05rem; display:flex; align-items:center; justify-content:center; padding:0;
+  }
 
   .empty{text-align:center; padding:2rem 1rem; color:var(--paper-dim);}
   .empty .ball{font-size:2rem; display:block; margin-bottom:0.5rem;}
@@ -179,9 +188,13 @@
   <div class="brand">
     <span class="ball">🏀</span>
     <div>
-      <h1 id="teamNameDisplay">Courtside</h1>
+      <h1>Courtside</h1>
       <small>Scorekeeper &amp; season stats</small>
     </div>
+  </div>
+  <div class="team-switcher">
+    <select id="teamSelector" aria-label="Select team"></select>
+    <button id="newTeamBtn" class="icon-btn-plus" title="Add new team" aria-label="Add new team">+</button>
   </div>
 </div>
 <nav class="tabs" id="tabs">
@@ -195,7 +208,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* ---------------------------------------------------------------
    STORAGE HELPERS — backed by Firestore
@@ -251,13 +264,22 @@ function flashStatus(elId, res){
 /* ---------------------------------------------------------------
    STATE
 --------------------------------------------------------------- */
-let roster = { teamName: 'My Team', players: [] };
-let gamesIndex = []; // [{id,date,opponent,homeScore,awayScore,final}]
+let teams = []; // [{id, name}]
+let activeTeamId = null;
+let roster = { players: [] }; // scoped to activeTeamId
+let gamesIndex = []; // [{id,date,opponent,homeScore,awayScore,final}] — scoped to activeTeamId
 let activeGameId = null;
 let currentGame = null; // full game object when on live tab
 let activeTab = 'roster';
 let clockTimer = null;
 let saveDebounce = null;
+
+function currentTeamName(){
+  return teams.find(t => t.id === activeTeamId)?.name || 'Team';
+}
+// Keys are namespaced per team so each team gets its own roster/games/season.
+function teamKey(base){ return base + ':' + activeTeamId; }
+function gameKey(gameId){ return 'game:' + activeTeamId + ':' + gameId; }
 
 const emptyQuarterStat = () => ({ fgm2:0, fga2:0, fgm3:0, fga3:0, ftm:0, fta:0, oreb:0, dreb:0, to:0, fouls:0, seconds:0 });
 const QUARTERS = ['q1','q2','q3','q4','ot'];
@@ -308,20 +330,20 @@ function queueSaveGame(){
 }
 async function flushGame(){
   if(!currentGame) return;
-  const res = await saveJSON('game:' + currentGame.id, currentGame);
+  const res = await saveJSON(gameKey(currentGame.id), currentGame);
   gameCache[currentGame.id] = currentGame;
   const banner = document.getElementById('liveSaveWarning');
   if(banner) banner.classList.toggle('show', !res.ok);
   return res;
 }
 async function persistGamesIndex(){
-  await saveJSON('games-index', gamesIndex);
+  await saveJSON(teamKey('games-index'), gamesIndex);
 }
-// Cached, dedup'd game loader — use this instead of raw loadJSON('game:'+id, ...)
+// Cached, dedup'd game loader — use this instead of raw loadJSON(gameKey(id), ...)
 async function loadGame(id){
   if(id === currentGame?.id) return currentGame;
   if(gameCache[id]) return gameCache[id];
-  const g = await loadJSON('game:' + id, null);
+  const g = await loadJSON(gameKey(id), null);
   if(g) gameCache[id] = g;
   return g;
 }
@@ -340,28 +362,87 @@ function updateIndexSummary(){
 async function init(){
   let dbReachable = true;
   try{
-    await getDoc(doc(db, STORAGE_COLLECTION, 'roster')); // connectivity probe
+    await getDoc(doc(db, STORAGE_COLLECTION, 'teams')); // connectivity probe
   }catch(e){
     dbReachable = false;
     console.error('database unreachable at startup', e);
   }
-  // Load the three independent keys in parallel instead of one-at-a-time.
-  const [rosterRes, gamesIndexRes, activeIdRes] = await Promise.all([
-    loadJSON('roster', { teamName:'My Team', players:[] }),
-    loadJSON('games-index', []),
-    loadJSON('active-game-id', null)
+
+  teams = await loadJSON('teams', []);
+  activeTeamId = await loadJSON('active-team-id', null);
+
+  if(teams.length === 0){
+    // First run: create a default team so the app always has something selected.
+    const t = { id: 'team_' + Date.now(), name: 'My Team' };
+    teams = [t];
+    activeTeamId = t.id;
+    await saveJSON('teams', teams);
+    await saveJSON('active-team-id', activeTeamId);
+  } else if(!activeTeamId || !teams.find(t => t.id === activeTeamId)){
+    activeTeamId = teams[0].id;
+    await saveJSON('active-team-id', activeTeamId);
+  }
+
+  await loadTeamData();
+  if(currentGame) activeTab = 'live';
+
+  if(!storageAvailable || !dbReachable) document.getElementById('storageBanner').classList.add('show');
+  bindTabs();
+  bindTeamSwitcher();
+  renderTeamSelector();
+  render();
+}
+
+// (Re)loads roster/games/active-game for whichever team is currently selected.
+async function loadTeamData(){
+  const [rosterRes, gamesIndexRes, activeGameIdRes] = await Promise.all([
+    loadJSON(teamKey('roster'), { players: [] }),
+    loadJSON(teamKey('games-index'), []),
+    loadJSON(teamKey('active-game-id'), null)
   ]);
   roster = rosterRes;
   gamesIndex = gamesIndexRes;
-  activeGameId = activeIdRes;
+  activeGameId = activeGameIdRes;
+  currentGame = null;
   if(activeGameId){
     currentGame = await loadGame(activeGameId);
-    if(currentGame) activeTab = 'live';
   }
-  document.getElementById('teamNameDisplay').textContent = roster.teamName || 'Courtside';
-  if(!storageAvailable || !dbReachable) document.getElementById('storageBanner').classList.add('show');
-  bindTabs();
-  render();
+}
+
+function renderTeamSelector(){
+  const sel = document.getElementById('teamSelector');
+  if(!sel) return;
+  sel.innerHTML = teams.map(t =>
+    `<option value="${escapeAttr(t.id)}" ${t.id===activeTeamId?'selected':''}>${escapeHtml(t.name)}</option>`
+  ).join('');
+}
+
+function bindTeamSwitcher(){
+  document.getElementById('teamSelector').addEventListener('change', async (e) => {
+    const newId = e.target.value;
+    if(newId === activeTeamId) return;
+    activeTeamId = newId;
+    await saveJSON('active-team-id', activeTeamId);
+    await loadTeamData();
+    render();
+  });
+  document.getElementById('newTeamBtn').addEventListener('click', async () => {
+    const name = prompt('New team name:');
+    if(!name || !name.trim()) return;
+    const t = { id: 'team_' + Date.now(), name: name.trim() };
+    teams.push(t);
+    const res = await saveJSON('teams', teams);
+    if(!res.ok){
+      teams.pop();
+      alert('Could not create team: ' + res.error);
+      return;
+    }
+    activeTeamId = t.id;
+    await saveJSON('active-team-id', activeTeamId);
+    renderTeamSelector();
+    await loadTeamData();
+    setTab('roster');
+  });
 }
 
 function bindTabs(){
@@ -396,7 +477,7 @@ function renderRoster(){
   return `
   <div class="card">
     <h2>Team name</h2>
-    <input type="text" id="teamNameInput" value="${escapeAttr(roster.teamName)}" placeholder="e.g. Storm U13">
+    <input type="text" id="teamNameInput" value="${escapeAttr(currentTeamName())}" placeholder="e.g. Storm U13">
     <button class="btn block" id="saveTeamName">Save team name</button>
     <span class="save-status" id="teamNameStatus"></span>
   </div>
@@ -423,7 +504,13 @@ function renderRoster(){
           <button class="icon-btn" data-remove-player="${p.id}" aria-label="Remove ${escapeAttr(p.name)}">✕</button>
         </div>
       `).join('')}
-  </div>`;
+  </div>
+  ${teams.length > 1 ? `
+  <div class="card">
+    <h2>Delete this team</h2>
+    <div class="empty" style="padding:0.3rem 0 0.8rem;">Permanently removes ${escapeHtml(currentTeamName())}, its roster, and all its games. This can't be undone.</div>
+    <button class="btn danger block" id="deleteTeamBtn">Delete ${escapeHtml(currentTeamName())}</button>
+  </div>` : ''}`;
 }
 
 /* ---------------------------------------------------------------
@@ -484,7 +571,7 @@ function renderLive(){
   return `
   <div class="storage-banner" id="liveSaveWarning">⚠️ The last stat update didn't save — check your connection. Keep playing; I'll keep retrying, but write down the score as backup.</div>
   <div class="scoreboard">
-    <div class="sb-team"><div class="label">${escapeHtml(roster.teamName)}</div><div class="score mono">${hs}</div></div>
+    <div class="sb-team"><div class="label">${escapeHtml(currentTeamName())}</div><div class="score mono">${hs}</div></div>
     <div class="sb-mid">
       <div class="clock mono" id="clockDisplay">${fmtClock(g.stats[roster.players[0]?.id]?.[q]?.seconds ?? 0)}</div>
       <div class="qtag">${QLABELS[q]}${g.clockRunning?' · LIVE':''}</div>
@@ -559,9 +646,9 @@ async function renderGameDetail(gameId){
   box.innerHTML = `
   <div class="card">
     <button class="backlink" id="closeDetail">← Back to schedule</button>
-    <h2>${escapeHtml(roster.teamName)} vs ${escapeHtml(g.opponent||'Opponent')} — ${g.date||''}</h2>
+    <h2>${escapeHtml(currentTeamName())} vs ${escapeHtml(g.opponent||'Opponent')} — ${g.date||''}</h2>
     <div class="section-label">Score by quarter</div>
-    <div class="table-wrap"><table><tr><th>Qtr</th><th>${escapeHtml(roster.teamName)}</th><th>${escapeHtml(g.opponent||'Opp')}</th></tr>${quarterTable}
+    <div class="table-wrap"><table><tr><th>Qtr</th><th>${escapeHtml(currentTeamName())}</th><th>${escapeHtml(g.opponent||'Opp')}</th></tr>${quarterTable}
       <tr><th>Total</th><th>${homeScore(g)}</th><th>${awayScore(g)}</th></tr></table></div>
     <div class="section-label">Box score</div>
     <div class="table-wrap"><table>
@@ -619,7 +706,7 @@ async function renderSeason(){
 
   app.innerHTML = `
   <div class="card">
-    <h2>${escapeHtml(roster.teamName)} — season totals</h2>
+    <h2>${escapeHtml(currentTeamName())} — season totals</h2>
     ${allGames.length===0 ? `<div class="empty"><span class="ball">🏀</span>No games recorded yet this season.</div>` : `
     <div class="table-wrap"><table>
       <tr><th>Player</th><th>GP</th><th>PTS</th><th>PPG</th><th>REB</th><th>TO</th><th>FLS</th><th>2P%</th><th>3P%</th><th>FT%</th><th>MPG</th></tr>
@@ -635,15 +722,36 @@ function attachHandlers(){
   // Roster
   const saveTeamBtn = document.getElementById('saveTeamName');
   if(saveTeamBtn) saveTeamBtn.onclick = async () => {
-    const prev = roster.teamName;
-    roster.teamName = document.getElementById('teamNameInput').value.trim() || 'My Team';
-    const res = await saveJSON('roster', roster);
+    const newName = document.getElementById('teamNameInput').value.trim() || 'My Team';
+    const team = teams.find(t => t.id === activeTeamId);
+    const prevName = team.name;
+    team.name = newName;
+    const res = await saveJSON('teams', teams);
     if(res.ok){
-      document.getElementById('teamNameDisplay').textContent = roster.teamName;
+      renderTeamSelector();
     } else {
-      roster.teamName = prev; // don't pretend it saved
+      team.name = prevName; // don't pretend it saved
     }
     flashStatus('teamNameStatus', res);
+  };
+  const deleteTeamBtn = document.getElementById('deleteTeamBtn');
+  if(deleteTeamBtn) deleteTeamBtn.onclick = async () => {
+    if(teams.length <= 1){ alert('You need at least one team.'); return; }
+    if(!confirm(`Delete ${currentTeamName()} and all its games? This can't be undone.`)) return;
+    const idToDelete = activeTeamId;
+    await Promise.all(gamesIndex.map(g => deleteDoc(doc(db, STORAGE_COLLECTION, gameKey(g.id))).catch(()=>{})));
+    await Promise.all([
+      deleteDoc(doc(db, STORAGE_COLLECTION, teamKey('roster'))).catch(()=>{}),
+      deleteDoc(doc(db, STORAGE_COLLECTION, teamKey('games-index'))).catch(()=>{}),
+      deleteDoc(doc(db, STORAGE_COLLECTION, teamKey('active-game-id'))).catch(()=>{})
+    ]);
+    teams = teams.filter(t => t.id !== idToDelete);
+    await saveJSON('teams', teams);
+    activeTeamId = teams[0].id;
+    await saveJSON('active-team-id', activeTeamId);
+    renderTeamSelector();
+    await loadTeamData();
+    setTab('roster');
   };
   const addPlayerBtn = document.getElementById('addPlayerBtn');
   if(addPlayerBtn) addPlayerBtn.onclick = async () => {
@@ -653,7 +761,7 @@ function attachHandlers(){
     if(!name) return;
     const newPlayer = { id:'p_'+Date.now(), name, number: numInput.value ? parseInt(numInput.value) : null };
     roster.players.push(newPlayer);
-    const res = await saveJSON('roster', roster);
+    const res = await saveJSON(teamKey('roster'), roster);
     if(!res.ok){
       roster.players = roster.players.filter(p => p.id !== newPlayer.id);
       alert('Could not save that player: ' + res.error);
@@ -664,7 +772,7 @@ function attachHandlers(){
     btn.onclick = async () => {
       const removed = roster.players.find(p => p.id === btn.dataset.removePlayer);
       roster.players = roster.players.filter(p => p.id !== btn.dataset.removePlayer);
-      const res = await saveJSON('roster', roster);
+      const res = await saveJSON(teamKey('roster'), roster);
       if(!res.ok && removed){
         roster.players.push(removed);
         alert('Could not remove that player: ' + res.error);
@@ -680,7 +788,7 @@ function attachHandlers(){
     const date = document.getElementById('dateInput').value;
     currentGame = newGame(opp, date);
     activeGameId = currentGame.id;
-    await saveJSON('active-game-id', activeGameId);
+    await saveJSON(teamKey('active-game-id'), activeGameId);
     updateIndexSummary();
     await persistGamesIndex();
     await flushGame();
@@ -759,7 +867,7 @@ function attachHandlers(){
     await persistGamesIndex();
     await flushGame();
     activeGameId = null;
-    await saveJSON('active-game-id', null);
+    await saveJSON(teamKey('active-game-id'), null);
     currentGame = null;
     setTab('history');
   };
