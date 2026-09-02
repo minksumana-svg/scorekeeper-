@@ -1,0 +1,1159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Courtside · Scorekeeper</title>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --court:#1b120c;
+    --court-line:#3a2a1c;
+    --wood:#c17a3d;
+    --wood-light:#e0a868;
+    --paper:#f4ecdc;
+    --paper-dim:#d9cdb2;
+    --ink:#1b120c;
+    --make:#2f9e5f;
+    --miss:#c0392b;
+    --panel:#241a12;
+    --panel-2:#2e2118;
+    --accent:#ffb648;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--court);
+    background-image:
+      repeating-linear-gradient(90deg, rgba(255,255,255,0.015) 0 2px, transparent 2px 40px),
+      radial-gradient(ellipse at 50% -10%, rgba(193,122,61,0.12), transparent 55%);
+    color:var(--paper);
+    font-family:'Inter',sans-serif;
+    min-height:100vh;
+    padding-bottom:2rem;
+  }
+  h1,h2,h3{font-family:'Oswald',sans-serif; margin:0; letter-spacing:0.02em;}
+  .mono{font-family:'Space Mono',monospace;}
+  button{font-family:inherit; cursor:pointer;}
+
+  /* ---- top nav ---- */
+  .topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0.9rem 1rem;
+    border-bottom:2px solid var(--wood);
+    background:linear-gradient(180deg, rgba(0,0,0,0.3), transparent);
+  }
+  .brand{display:flex; align-items:center; gap:0.5rem;}
+  .brand .ball{font-size:1.3rem;}
+  .brand h1{font-size:1.15rem; text-transform:uppercase; color:var(--wood-light);}
+  .brand small{display:block; font-size:0.65rem; color:var(--paper-dim); font-weight:400; letter-spacing:0.08em; text-transform:uppercase;}
+  nav.tabs{display:flex; gap:0.35rem; padding:0 1rem; margin-top:0.7rem; overflow-x:auto;}
+  nav.tabs button{
+    background:var(--panel); color:var(--paper-dim); border:1px solid var(--court-line);
+    padding:0.5rem 0.9rem; border-radius:999px; font-size:0.8rem; font-weight:600;
+    text-transform:uppercase; letter-spacing:0.04em; white-space:nowrap;
+  }
+  nav.tabs button.active{background:var(--wood); color:var(--ink); border-color:var(--wood);}
+
+  main{padding:1rem; max-width:760px; margin:0 auto;}
+  .card{
+    background:var(--panel); border:1px solid var(--court-line); border-radius:14px;
+    padding:1rem; margin-bottom:1rem;
+  }
+  .card h2{font-size:1rem; text-transform:uppercase; color:var(--wood-light); margin-bottom:0.75rem;}
+  label{display:block; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--paper-dim); margin-bottom:0.25rem;}
+  input[type=text], input[type=number], input[type=date], select{
+    width:100%; background:var(--court); border:1px solid var(--court-line); color:var(--paper);
+    padding:0.55rem 0.6rem; border-radius:8px; font-size:0.95rem; margin-bottom:0.7rem;
+  }
+  input:focus, select:focus{outline:2px solid var(--accent); outline-offset:1px;}
+  .row{display:flex; gap:0.5rem;}
+  .row > *{flex:1;}
+  .btn{
+    background:var(--wood); color:var(--ink); border:none; padding:0.6rem 1rem;
+    border-radius:8px; font-weight:700; font-size:0.85rem; text-transform:uppercase; letter-spacing:0.03em;
+  }
+  .btn.secondary{background:var(--panel-2); color:var(--paper); border:1px solid var(--court-line);}
+  .btn.danger{background:var(--miss); color:#fff;}
+  .btn.block{width:100%;}
+  .btn:disabled{opacity:0.4; cursor:not-allowed;}
+  .btn:focus-visible, button:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+
+  .player-list-item{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0.55rem 0.2rem; border-bottom:1px solid var(--court-line);
+  }
+  .player-list-item:last-child{border-bottom:none;}
+  .player-name{font-weight:600;}
+  .player-num{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:1.8rem; height:1.8rem; border-radius:50%; background:var(--court);
+    border:1px solid var(--wood); color:var(--wood-light); font-family:'Space Mono',monospace;
+    font-size:0.75rem; margin-right:0.5rem;
+  }
+  .icon-btn{background:none; border:none; color:var(--miss); font-size:1.1rem; padding:0.2rem 0.4rem;}
+  .team-switcher{display:flex; align-items:center; gap:0.4rem;}
+  .team-switcher select{
+    background:var(--panel); border:1px solid var(--wood); color:var(--paper);
+    padding:0.4rem 2rem 0.4rem 0.6rem; border-radius:8px; font-size:0.82rem; font-weight:600; max-width:150px;
+  }
+  .icon-btn-plus{
+    background:var(--wood); color:var(--ink); border:none; width:1.9rem; height:1.9rem; flex-shrink:0;
+    border-radius:50%; font-weight:700; font-size:1.05rem; display:flex; align-items:center; justify-content:center; padding:0;
+  }
+
+  .empty{text-align:center; padding:2rem 1rem; color:var(--paper-dim);}
+  .empty .ball{font-size:2rem; display:block; margin-bottom:0.5rem;}
+
+  /* ---- scoreboard ---- */
+  .scoreboard{
+    background:var(--panel-2); border:2px solid var(--wood); border-radius:14px;
+    padding:1rem; margin-bottom:1rem;
+    display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:0.5rem;
+  }
+  .sb-team{text-align:center;}
+  .sb-team .sb-tag{font-size:0.6rem; letter-spacing:0.12em; color:var(--wood-light); font-weight:700; margin-bottom:0.1rem;}
+  .sb-team .label{font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--paper-dim); margin-bottom:0.15rem;}
+  .sb-team .score{font-family:'Space Mono',monospace; font-size:2.4rem; font-weight:700; color:var(--accent); line-height:1;}
+  .sb-mid{text-align:center;}
+  .sb-mid .clock{font-family:'Space Mono',monospace; font-size:1.4rem; color:var(--paper);}
+  .sb-mid .qtag{font-size:0.7rem; color:var(--wood-light); text-transform:uppercase; letter-spacing:0.08em; margin-top:0.15rem;}
+
+  .quarter-tabs{display:flex; gap:0.4rem; margin-bottom:0.8rem; flex-wrap:wrap;}
+  .quarter-tabs button{
+    flex:1; min-width:52px; background:var(--panel); border:1px solid var(--court-line); color:var(--paper-dim);
+    padding:0.45rem 0.3rem; border-radius:8px; font-weight:700; font-size:0.8rem;
+  }
+  .quarter-tabs button.active{background:var(--accent); color:var(--ink); border-color:var(--accent);}
+
+  .clock-controls{display:flex; gap:0.5rem; margin-bottom:0.9rem;}
+
+  .court-slot.opponent-slot{border-color:var(--wood); background:var(--panel);}
+  .court-slot.opponent-slot.active{border-color:var(--accent);}
+
+  .live-panel-grid{display:grid; grid-template-columns:1fr 1fr; gap:0 1.1rem; align-items:start;}
+  .live-col-stats{border-left:1px solid var(--court-line); padding-left:1.1rem;}
+  @media (max-width:640px){
+    .live-panel-grid{grid-template-columns:1fr; gap:0;}
+    .live-col-stats{border-left:none; padding-left:0; border-top:1px solid var(--court-line); padding-top:0.9rem; margin-top:0.9rem;}
+  }
+
+  .court-grid{display:flex; flex-direction:column; gap:0.5rem; margin-bottom:0.9rem;}
+  .court-slot{
+    display:flex; align-items:center; gap:0.6rem;
+    background:var(--panel-2); border:1px solid var(--court-line); border-radius:10px;
+    padding:0.55rem 0.7rem; cursor:pointer;
+  }
+  .court-slot.active{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset;}
+  .cs-info{display:flex; align-items:center; gap:0.5rem; font-weight:700; font-size:0.9rem; flex:1; min-width:0;}
+  .cs-name{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .cs-time{font-family:'Space Mono',monospace; font-size:0.78rem; color:var(--paper-dim); flex-shrink:0;}
+  .bench-list{display:flex; flex-direction:column; gap:0.5rem; margin-bottom:0.9rem;}
+  .bench-row{
+    display:flex; align-items:center; justify-content:space-between;
+    background:var(--panel); border:1px solid var(--court-line); border-radius:10px; padding:0.5rem 0.7rem;
+  }
+  .pc-meta{display:flex; align-items:center; gap:0.6rem; font-family:'Space Mono',monospace; font-size:0.78rem; color:var(--paper-dim); flex-wrap:wrap;}
+  .pc-pts{color:var(--accent); font-weight:700;}
+  .stat-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:0.35rem;}
+  @media (max-width:640px){
+    .stat-grid{grid-template-columns:repeat(4,1fr);}
+  }
+  .stat-btn{
+    background:var(--court); border:1px solid var(--court-line); color:var(--paper);
+    border-radius:8px; padding:0.45rem 0.2rem; font-size:0.72rem; font-weight:600; text-align:center; line-height:1.25;
+  }
+  .stat-btn .n{display:block; font-family:'Space Mono',monospace; font-size:0.85rem; color:var(--paper-dim); margin-top:0.1rem;}
+  .stat-btn.make{border-color:var(--make);}
+  .stat-btn.miss{border-color:var(--miss);}
+  .stat-btn.other{border-color:var(--wood);}
+  .stat-btn:active{transform:scale(0.95);}
+
+  table{width:100%; border-collapse:collapse; font-size:0.8rem;}
+  th,td{padding:0.4rem 0.35rem; text-align:center; border-bottom:1px solid var(--court-line);}
+  th{color:var(--wood-light); font-size:0.65rem; text-transform:uppercase; letter-spacing:0.03em;}
+  td:first-child, th:first-child{text-align:left;}
+  .game-row{display:flex; justify-content:space-between; align-items:center; padding:0.6rem 0.2rem; border-bottom:1px solid var(--court-line); cursor:pointer;}
+  .game-row:last-child{border-bottom:none;}
+  .game-row .opp{font-weight:700;}
+  .game-row .date{font-size:0.72rem; color:var(--paper-dim);}
+  .game-row .res{font-family:'Space Mono',monospace; font-weight:700;}
+  .res.W{color:var(--make);} .res.L{color:var(--miss);} .res.LIVE{color:var(--accent);}
+  .pill{display:inline-block; padding:0.15rem 0.5rem; border-radius:999px; font-size:0.65rem; text-transform:uppercase; font-weight:700; letter-spacing:0.03em;}
+  .section-label{font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--wood-light); margin:0.9rem 0 0.4rem;}
+  .table-wrap{overflow-x:auto;}
+  .backlink{background:none;border:none;color:var(--wood-light);font-weight:700;font-size:0.85rem;margin-bottom:0.7rem;padding:0;}
+  .save-status{display:inline-block; font-size:0.75rem; margin-left:0.6rem; font-weight:600;}
+  .save-status.ok{color:var(--make);}
+  .save-status.err{color:var(--miss);}
+  .storage-banner{
+    background:#3d2a1a; border:1px solid var(--miss); color:var(--paper);
+    padding:0.7rem 0.9rem; font-size:0.82rem; line-height:1.4; display:none;
+  }
+  .storage-banner.show{display:block;}
+</style>
+</head>
+<body>
+
+<div class="storage-banner" id="storageBanner">
+  ⚠️ Can't reach the database right now. Check your internet connection and that the Firestore security rules allow access — your entries won't be saved until it's reachable.
+</div>
+<div class="topbar">
+  <div class="brand">
+    <span class="ball">🏀</span>
+    <div>
+      <h1>Courtside</h1>
+      <small>Scorekeeper &amp; season stats</small>
+    </div>
+  </div>
+  <div class="team-switcher">
+    <select id="teamSelector" aria-label="Select team"></select>
+    <button id="newTeamBtn" class="icon-btn-plus" title="Add new team" aria-label="Add new team">+</button>
+  </div>
+</div>
+<nav class="tabs" id="tabs">
+  <button data-tab="roster" class="active">Roster</button>
+  <button data-tab="live">Live Game</button>
+  <button data-tab="history">History</button>
+  <button data-tab="season">Season Stats</button>
+</nav>
+
+<main id="app"></main>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+/* ---------------------------------------------------------------
+   STORAGE HELPERS — backed by Firestore
+--------------------------------------------------------------- */
+const firebaseConfig = {
+  apiKey: "AIzaSyAfZZBIPQWFFgKN9T1L8r_JaAnC87KyBqM",
+  authDomain: "bball-scorekeeper.firebaseapp.com",
+  projectId: "bball-scorekeeper",
+  storageBucket: "bball-scorekeeper.firebasestorage.app",
+  messagingSenderId: "133539827196",
+  appId: "1:133539827196:web:9aaba7eb66e3266bdc3679",
+  measurementId: "G-KLP8P3FK3K"
+};
+const fbApp = initializeApp(firebaseConfig);
+const db = getFirestore(fbApp);
+const STORAGE_COLLECTION = 'storage'; // one doc per key, mirrors the old get/set(key,value) shape
+
+const storageAvailable = true;
+
+async function loadJSON(key, fallback){
+  try{
+    const snap = await getDoc(doc(db, STORAGE_COLLECTION, key));
+    if(snap.exists()){
+      const data = snap.data();
+      try{ return JSON.parse(data.value); }catch(e){ return data.value; }
+    }
+    return fallback;
+  }catch(e){
+    console.error('load failed', key, e);
+    return fallback;
+  }
+}
+// Returns {ok:boolean, error?:string}
+async function saveJSON(key, value){
+  try{
+    await setDoc(doc(db, STORAGE_COLLECTION, key), { value: JSON.stringify(value), updatedAt: Date.now() });
+    return { ok:true };
+  }catch(e){
+    console.error('save failed', key, e);
+    return { ok:false, error: (e && e.message) ? e.message : String(e) };
+  }
+}
+function flashStatus(elId, res){
+  const el = document.getElementById(elId);
+  if(!el) return;
+  const ok = res === true || res?.ok;
+  el.textContent = ok ? '✓ Saved' : '⚠ ' + (res?.error ? res.error : 'Save failed — try again');
+  el.className = 'save-status ' + (ok ? 'ok' : 'err');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.textContent=''; }, 4000);
+}
+
+/* ---------------------------------------------------------------
+   STATE
+--------------------------------------------------------------- */
+let teams = []; // [{id, name}]
+let activeTeamId = null;
+let roster = { players: [] }; // scoped to activeTeamId
+let gamesIndex = []; // [{id,date,opponent,homeScore,awayScore,final}] — scoped to activeTeamId
+let activeGameId = null;
+let currentGame = null; // full game object when on live tab
+let selectedPlayerId = null; // which on-court player (or 'OPPONENT') the panel is recording for
+let showSubPicker = false; // whether the bench picker is expanded
+let activeTab = 'roster';
+let clockTimer = null;
+let saveDebounce = null;
+
+function currentTeamName(){
+  return teams.find(t => t.id === activeTeamId)?.name || 'Team';
+}
+// Keys are namespaced per team so each team gets its own roster/games/season.
+function teamKey(base){ return base + ':' + activeTeamId; }
+function gameKey(gameId){ return 'game:' + activeTeamId + ':' + gameId; }
+
+const emptyQuarterStat = () => ({ fgm2:0, fga2:0, fgm3:0, fga3:0, ftm:0, fta:0, oreb:0, dreb:0, to:0, fouls:0, seconds:0 });
+const QUARTERS = ['q1','q2','q3','q4','ot'];
+const QLABELS = {q1:'Q1', q2:'Q2', q3:'Q3', q4:'Q4', ot:'OT'};
+
+function newGame(opponent, date, homeAway, quarterMinutes, otMinutes){
+  const id = 'g_' + Date.now();
+  const stats = {};
+  roster.players.forEach(p => {
+    stats[p.id] = { q1:emptyQuarterStat(), q2:emptyQuarterStat(), q3:emptyQuarterStat(), q4:emptyQuarterStat(), ot:emptyQuarterStat() };
+  });
+  const qLen = Math.max(60, Math.round((parseFloat(quarterMinutes) || 10) * 60));
+  const otLen = Math.max(60, Math.round((parseFloat(otMinutes) || 3) * 60));
+  return {
+    id, opponent, date, final:false,
+    homeAway: homeAway === 'away' ? 'away' : 'home', // whether OUR team is home or away
+    excludeFromSeason:false,
+    currentQuarter:'q1',
+    clockRunning:false,
+    onCourt: [],
+    quarterLengthSec: qLen,
+    otLengthSec: otLen,
+    quarterRemaining: { q1:qLen, q2:qLen, q3:qLen, q4:qLen, ot:otLen }, // countdown clock, per quarter
+    oppStats: { q1:emptyQuarterStat(), q2:emptyQuarterStat(), q3:emptyQuarterStat(), q4:emptyQuarterStat(), ot:emptyQuarterStat() }, // opponent tracked like a player
+    stats
+  };
+}
+
+function playerPoints(qs){ return qs.fgm2*2 + qs.fgm3*3 + qs.ftm; }
+function totalPlayerStat(pid, field){
+  const s = currentGame.stats[pid]; if(!s) return 0;
+  return QUARTERS.reduce((sum,q)=> sum + (field==='pts' ? playerPoints(s[q]) : s[q][field]), 0);
+}
+function homeScore(game){
+  let total = 0;
+  Object.values(game.stats).forEach(s => QUARTERS.forEach(q => total += playerPoints(s[q])));
+  return total;
+}
+function awayScore(game){
+  return QUARTERS.reduce((sum,q) => sum + playerPoints((game.oppStats && game.oppStats[q]) || emptyQuarterStat()), 0);
+}
+// Sums a full team's quarter-stat objects into one totals object — used for
+// the home-vs-away comparison table. statsSource is either a per-player map
+// (home) or a per-quarter map (opponent); pass which kind via isPerPlayer.
+function aggregateTeamStats(game, isHome){
+  const totals = { fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0,oreb:0,dreb:0,to:0,fouls:0 };
+  const addQ = (qs) => {
+    totals.fgm2+=qs.fgm2; totals.fga2+=qs.fga2; totals.fgm3+=qs.fgm3; totals.fga3+=qs.fga3;
+    totals.ftm+=qs.ftm; totals.fta+=qs.fta; totals.oreb+=qs.oreb; totals.dreb+=qs.dreb;
+    totals.to+=qs.to; totals.fouls+=qs.fouls;
+  };
+  if(isHome){
+    Object.values(game.stats).forEach(s => QUARTERS.forEach(q => addQ(s[q])));
+  } else {
+    QUARTERS.forEach(q => addQ((game.oppStats && game.oppStats[q]) || emptyQuarterStat()));
+  }
+  return totals;
+}
+function pct(made, att){ return att ? Math.round(100*made/att) : 0; }
+// Builds the Home vs Away "all categories" comparison table.
+function comparisonTableHtml(game, usName, oppName){
+  const h = aggregateTeamStats(game, true), a = aggregateTeamStats(game, false);
+  const hPts = h.fgm2*2+h.fgm3*3+h.ftm, aPts = a.fgm2*2+a.fgm3*3+a.ftm;
+  const rows = [
+    ['PTS', hPts, aPts],
+    ['REB', h.oreb+h.dreb, a.oreb+a.dreb],
+    ['OREB', h.oreb, a.oreb],
+    ['DREB', h.dreb, a.dreb],
+    ['TO', h.to, a.to],
+    ['FLS', h.fouls, a.fouls],
+    ['FG%', pct(h.fgm2+h.fgm3, h.fga2+h.fga3)+'%', pct(a.fgm2+a.fgm3, a.fga2+a.fga3)+'%'],
+    ['3P%', pct(h.fgm3,h.fga3)+'%', pct(a.fgm3,a.fga3)+'%'],
+    ['FT%', pct(h.ftm,h.fta)+'%', pct(a.ftm,a.fta)+'%'],
+  ];
+  return `<div class="table-wrap"><table>
+    <tr><th>Category</th><th>${escapeHtml(usName)}</th><th>${escapeHtml(oppName)}</th></tr>
+    ${rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('')}
+  </table></div>`;
+}
+function fmtClock(sec){
+  const m = Math.floor(sec/60), s = sec%60;
+  return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+}
+
+/* ---------------------------------------------------------------
+   SAVE / SYNC
+--------------------------------------------------------------- */
+const gameCache = {}; // id -> game object, avoids refetching games already loaded this session
+
+function queueSaveGame(){
+  clearTimeout(saveDebounce);
+  saveDebounce = setTimeout(flushGame, 500);
+}
+async function flushGame(){
+  if(!currentGame) return;
+  const res = await saveJSON(gameKey(currentGame.id), currentGame);
+  gameCache[currentGame.id] = currentGame;
+  const banner = document.getElementById('liveSaveWarning');
+  if(banner) banner.classList.toggle('show', !res.ok);
+  return res;
+}
+async function persistGamesIndex(){
+  await saveJSON(teamKey('games-index'), gamesIndex);
+}
+// Cached, dedup'd game loader — use this instead of raw loadJSON(gameKey(id), ...)
+async function loadGame(id){
+  if(id === currentGame?.id) return currentGame;
+  if(gameCache[id]) return gameCache[id];
+  const g = await loadJSON(gameKey(id), null);
+  if(g) gameCache[id] = g;
+  return g;
+}
+function updateIndexSummary(){
+  const idx = gamesIndex.findIndex(g => g.id === currentGame.id);
+  const summary = {
+    id: currentGame.id, date: currentGame.date, opponent: currentGame.opponent,
+    homeScore: homeScore(currentGame), awayScore: awayScore(currentGame), final: currentGame.final,
+    homeAway: currentGame.homeAway, excludeFromSeason: currentGame.excludeFromSeason
+  };
+  if(idx >= 0) gamesIndex[idx] = summary; else gamesIndex.unshift(summary);
+}
+
+/* ---------------------------------------------------------------
+   INIT
+--------------------------------------------------------------- */
+async function init(){
+  let dbReachable = true;
+  try{
+    await getDoc(doc(db, STORAGE_COLLECTION, 'teams')); // connectivity probe
+  }catch(e){
+    dbReachable = false;
+    console.error('database unreachable at startup', e);
+  }
+
+  teams = await loadJSON('teams', []);
+  activeTeamId = await loadJSON('active-team-id', null);
+
+  if(teams.length === 0){
+    // First run: create a default team so the app always has something selected.
+    const t = { id: 'team_' + Date.now(), name: 'My Team' };
+    teams = [t];
+    activeTeamId = t.id;
+    await saveJSON('teams', teams);
+    await saveJSON('active-team-id', activeTeamId);
+  } else if(!activeTeamId || !teams.find(t => t.id === activeTeamId)){
+    activeTeamId = teams[0].id;
+    await saveJSON('active-team-id', activeTeamId);
+  }
+
+  await loadTeamData();
+  if(currentGame) activeTab = 'live';
+
+  if(!storageAvailable || !dbReachable) document.getElementById('storageBanner').classList.add('show');
+  bindTabs();
+  bindTeamSwitcher();
+  renderTeamSelector();
+  render();
+}
+
+// (Re)loads roster/games/active-game for whichever team is currently selected.
+async function loadTeamData(){
+  const [rosterRes, gamesIndexRes, activeGameIdRes] = await Promise.all([
+    loadJSON(teamKey('roster'), { players: [] }),
+    loadJSON(teamKey('games-index'), []),
+    loadJSON(teamKey('active-game-id'), null)
+  ]);
+  roster = rosterRes;
+  gamesIndex = gamesIndexRes;
+  activeGameId = activeGameIdRes;
+  currentGame = null;
+  selectedPlayerId = null; showSubPicker = false;
+  if(activeGameId){
+    currentGame = await loadGame(activeGameId);
+  }
+}
+
+function renderTeamSelector(){
+  const sel = document.getElementById('teamSelector');
+  if(!sel) return;
+  sel.innerHTML = teams.map(t =>
+    `<option value="${escapeAttr(t.id)}" ${t.id===activeTeamId?'selected':''}>${escapeHtml(t.name)}</option>`
+  ).join('');
+}
+
+// Shared team-switch logic — used by both the top-bar selector and the
+// inline selector on the Live Game tab so they always stay in sync.
+async function switchTeam(newId){
+  if(!newId || newId === activeTeamId) return;
+  activeTeamId = newId;
+  await saveJSON('active-team-id', activeTeamId);
+  await loadTeamData();
+  renderTeamSelector();
+  render();
+}
+
+function bindTeamSwitcher(){
+  document.getElementById('teamSelector').addEventListener('change', (e) => switchTeam(e.target.value));
+  document.getElementById('newTeamBtn').addEventListener('click', async () => {
+    const name = prompt('New team name:');
+    if(!name || !name.trim()) return;
+    const t = { id: 'team_' + Date.now(), name: name.trim() };
+    teams.push(t);
+    const res = await saveJSON('teams', teams);
+    if(!res.ok){
+      teams.pop();
+      alert('Could not create team: ' + res.error);
+      return;
+    }
+    activeTeamId = t.id;
+    await saveJSON('active-team-id', activeTeamId);
+    renderTeamSelector();
+    await loadTeamData();
+    setTab('roster');
+  });
+}
+
+function bindTabs(){
+  document.getElementById('tabs').addEventListener('click', e => {
+    const btn = e.target.closest('button[data-tab]');
+    if(!btn) return;
+    setTab(btn.dataset.tab);
+  });
+}
+function setTab(tab){
+  activeTab = tab;
+  document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
+  render();
+}
+
+/* ---------------------------------------------------------------
+   RENDER ROOT
+--------------------------------------------------------------- */
+function render(){
+  const app = document.getElementById('app');
+  if(activeTab==='roster') app.innerHTML = renderRoster();
+  else if(activeTab==='live') app.innerHTML = renderLive();
+  else if(activeTab==='history') app.innerHTML = renderHistory();
+  else if(activeTab==='season') app.innerHTML = renderSeason();
+  attachHandlers();
+}
+
+/* ---------------------------------------------------------------
+   ROSTER TAB
+--------------------------------------------------------------- */
+function renderRoster(){
+  return `
+  <div class="card">
+    <h2>Team name</h2>
+    <input type="text" id="teamNameInput" value="${escapeAttr(currentTeamName())}" placeholder="e.g. Storm U13">
+    <button class="btn block" id="saveTeamName">Save team name</button>
+    <span class="save-status" id="teamNameStatus"></span>
+  </div>
+  <div class="card">
+    <h2>Add player</h2>
+    <div class="row">
+      <div>
+        <label>Player name</label>
+        <input type="text" id="newPlayerName" placeholder="Full name">
+      </div>
+      <div style="max-width:90px;">
+        <label>Number</label>
+        <input type="number" id="newPlayerNum" placeholder="#" min="0" max="99">
+      </div>
+    </div>
+    <button class="btn block" id="addPlayerBtn">Add to roster</button>
+  </div>
+  <div class="card">
+    <h2>Roster (${roster.players.length})</h2>
+    ${roster.players.length===0 ? `<div class="empty"><span class="ball">🏀</span>No players yet. Add your first player above.</div>` :
+      roster.players.map(p => `
+        <div class="player-list-item">
+          <span class="player-name"><span class="player-num">${p.number ?? '–'}</span>${escapeHtml(p.name)}</span>
+          <button class="icon-btn" data-remove-player="${p.id}" aria-label="Remove ${escapeAttr(p.name)}">✕</button>
+        </div>
+      `).join('')}
+  </div>
+  ${teams.length > 1 ? `
+  <div class="card">
+    <h2>Delete this team</h2>
+    <div class="empty" style="padding:0.3rem 0 0.8rem;">Permanently removes ${escapeHtml(currentTeamName())}, its roster, and all its games. This can't be undone.</div>
+    <button class="btn danger block" id="deleteTeamBtn">Delete ${escapeHtml(currentTeamName())}</button>
+  </div>` : ''}`;
+}
+
+/* ---------------------------------------------------------------
+   LIVE GAME TAB
+--------------------------------------------------------------- */
+function renderLive(){
+  const teamPicker = `
+  <div class="card" style="padding:0.75rem 1rem;">
+    <label style="margin-bottom:0.3rem;">Team</label>
+    <select id="liveTeamSelector">
+      ${teams.map(t => `<option value="${escapeAttr(t.id)}" ${t.id===activeTeamId?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}
+    </select>
+  </div>`;
+
+  if(!currentGame){
+    return teamPicker + `
+    <div class="card">
+      <h2>Start a new game</h2>
+      ${roster.players.length===0 ? `<div class="empty"><span class="ball">🏀</span>Add players to ${escapeHtml(currentTeamName())}'s roster first.</div>` : `
+      <label>Opponent</label>
+      <input type="text" id="oppInput" placeholder="Opponent team name">
+      <label>Date</label>
+      <input type="date" id="dateInput" value="${new Date().toISOString().slice(0,10)}">
+      <label>${escapeHtml(currentTeamName())} is playing</label>
+      <select id="homeAwaySelect">
+        <option value="home">Home</option>
+        <option value="away">Away</option>
+      </select>
+      <div class="row">
+        <div>
+          <label>Quarter length (min)</label>
+          <input type="number" id="quarterMinInput" min="1" max="60" step="1" value="10">
+        </div>
+        <div>
+          <label>Overtime length (min)</label>
+          <input type="number" id="otMinInput" min="1" max="30" step="1" value="3">
+        </div>
+      </div>
+      <button class="btn block" id="startGameBtn">Tip off</button>
+      `}
+    </div>`;
+  }
+
+  const g = currentGame;
+  const q = g.currentQuarter;
+  const hs = homeScore(g), as = awayScore(g);
+  const remaining = g.quarterRemaining[q];
+  const quarterOver = remaining <= 0;
+
+  const quarterTabs = QUARTERS.map(qk => `<button data-quarter="${qk}" class="${qk===q?'active':''}">${QLABELS[qk]}</button>`).join('');
+
+  // Selection bookkeeping: only an on-court player (or the opponent) can be selected for stat entry.
+  if(selectedPlayerId && selectedPlayerId !== 'OPPONENT' && !g.onCourt.includes(selectedPlayerId)) selectedPlayerId = null;
+  if(!selectedPlayerId && g.onCourt.length > 0) selectedPlayerId = g.onCourt[0];
+
+  const onCourtPlayers = roster.players.filter(p => g.onCourt.includes(p.id));
+  const benchPlayers = roster.players.filter(p => !g.onCourt.includes(p.id));
+
+  const courtTilesHtml = onCourtPlayers.map(p => `
+    <div class="court-slot ${p.id===selectedPlayerId?'active':''}" data-select-player="${p.id}">
+      <div class="cs-info">
+        <span class="player-num">${p.number ?? '–'}</span>
+        <span class="cs-name">${escapeHtml(p.name)}</span>
+      </div>
+      <span class="cs-time mono">${fmtClock(totalPlayerStat(p.id,'seconds'))}</span>
+      <button class="btn secondary" data-sub-out="${p.id}">Sub out</button>
+    </div>`).join('');
+
+  const opponentTileHtml = `
+    <div class="court-slot opponent-slot ${selectedPlayerId==='OPPONENT'?'active':''}" data-select-player="OPPONENT">
+      <div class="cs-info">
+        <span class="cs-name">🏳️ ${escapeHtml(g.opponent||'Opponent')} <span style="color:var(--paper-dim); font-weight:400;">(team)</span></span>
+      </div>
+      <span class="cs-time mono">${as} PTS</span>
+    </div>`;
+
+  const subPickerHtml = !showSubPicker ? '' : `
+    <div class="section-label" style="margin-top:0.9rem;">Sub in — court is at ${onCourtPlayers.length}/5</div>
+    ${benchPlayers.length === 0
+      ? `<div class="empty" style="padding:0.8rem;">Whole roster is already on court.</div>`
+      : `<div class="bench-list">${benchPlayers.map(p => `
+        <div class="bench-row">
+          <span class="player-name"><span class="player-num">${p.number ?? '–'}</span>${escapeHtml(p.name)}</span>
+          <button class="btn secondary" data-sub-in="${p.id}">Sub in</button>
+        </div>`).join('')}</div>`}
+    <button class="backlink" id="closeSubPicker" style="margin-top:0.5rem;">Close</button>`;
+
+  const isOpp = selectedPlayerId === 'OPPONENT';
+  const selPlayer = isOpp ? { id:'OPPONENT', name: g.opponent||'Opponent' } : roster.players.find(p => p.id === selectedPlayerId);
+  const selQs = isOpp ? (g.oppStats[q] || emptyQuarterStat()) : (selPlayer ? g.stats[selPlayer.id][q] : null);
+
+  const statsPanelHtml = `
+  <div class="card">
+    <div class="live-panel-grid">
+      <div class="live-col-court">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.6rem; flex-wrap:wrap; gap:0.5rem;">
+          <h2>On court (${onCourtPlayers.length}/5)</h2>
+          <button class="btn secondary" id="subToggleBtn">🔁 ${showSubPicker ? 'Hide bench' : 'Substitute'}</button>
+        </div>
+        ${subPickerHtml}
+        <div class="court-grid" style="margin-top:${showSubPicker?'0.9rem':'0'};">
+          ${onCourtPlayers.length===0 ? `<div class="empty" style="padding:1rem;">No one on court — tap Substitute to bring players in.</div>` : courtTilesHtml}
+          ${opponentTileHtml}
+        </div>
+      </div>
+      <div class="live-col-stats">
+        ${selPlayer ? `
+        <h2>Recording for ${escapeHtml(selPlayer.name)}</h2>
+        <div class="pc-meta" id="selPlayerMeta" style="margin-bottom:0.7rem;">
+          <span class="pc-pts">${playerPoints(selQs)} PTS (${QLABELS[q]})</span>
+          ${isOpp ? '' : `<span>Q time ${fmtClock(selQs.seconds)}</span><span>Game time ${fmtClock(totalPlayerStat(selPlayer.id,'seconds'))}</span>`}
+        </div>
+        <div class="stat-grid">
+          <button class="stat-btn make" data-field="fgm2">2PT Make<span class="n">${selQs.fgm2}/${selQs.fga2}</span></button>
+          <button class="stat-btn miss" data-field="fga2miss">2PT Miss<span class="n">${selQs.fga2-selQs.fgm2}</span></button>
+          <button class="stat-btn make" data-field="fgm3">3PT Make<span class="n">${selQs.fgm3}/${selQs.fga3}</span></button>
+          <button class="stat-btn miss" data-field="fga3miss">3PT Miss<span class="n">${selQs.fga3-selQs.fgm3}</span></button>
+          <button class="stat-btn make" data-field="ftm">FT Make<span class="n">${selQs.ftm}/${selQs.fta}</span></button>
+          <button class="stat-btn miss" data-field="ftamiss">FT Miss<span class="n">${selQs.fta-selQs.ftm}</span></button>
+          <button class="stat-btn other" data-field="oreb">Off Reb<span class="n">${selQs.oreb}</span></button>
+          <button class="stat-btn other" data-field="dreb">Def Reb<span class="n">${selQs.dreb}</span></button>
+          <button class="stat-btn other" data-field="to">Turnover<span class="n">${selQs.to}</span></button>
+          <button class="stat-btn other" data-field="fouls">Foul<span class="n">${selQs.fouls}</span></button>
+        </div>` : `<div class="empty">Tap a player — or the opponent tile — above to record stats.</div>`}
+      </div>
+    </div>
+  </div>`;
+
+  return teamPicker + `
+  <div class="storage-banner" id="liveSaveWarning">⚠️ The last stat update didn't save — check your connection. Keep playing; I'll keep retrying, but write down the score as backup.</div>
+  <div class="scoreboard">
+    <div class="sb-team"><div class="sb-tag">${g.homeAway==='away'?'AWAY':'HOME'}</div><div class="label">${escapeHtml(currentTeamName())}</div><div class="score mono">${hs}</div></div>
+    <div class="sb-mid">
+      <div class="clock mono" id="clockDisplay">${fmtClock(remaining)}</div>
+      <div class="qtag">${quarterOver ? `END OF ${QLABELS[q]}` : QLABELS[q]}${g.clockRunning?' · LIVE':''}</div>
+    </div>
+    <div class="sb-team"><div class="sb-tag">${g.homeAway==='away'?'HOME':'AWAY'}</div><div class="label">${escapeHtml(g.opponent||'Opponent')}</div><div class="score mono">${as}</div></div>
+  </div>
+
+  <div class="card">
+    <div class="quarter-tabs">${quarterTabs}</div>
+    <div class="clock-controls">
+      ${quarterOver
+        ? `<button class="btn secondary" disabled>End of ${QLABELS[q]} — ${fmtClock(0)}</button>`
+        : `<button class="btn ${g.clockRunning?'secondary':''}" id="clockToggle">${g.clockRunning?'⏸ Pause clock':'▶ Start clock'}</button>`}
+      <button class="btn secondary" id="endGameBtn">End game</button>
+    </div>
+  </div>
+
+  ${statsPanelHtml}
+
+  <div class="card">
+    <h2>Team comparison</h2>
+    ${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}
+  </div>
+  `;
+}
+
+/* ---------------------------------------------------------------
+   HISTORY TAB
+--------------------------------------------------------------- */
+function renderHistory(){
+  if(gamesIndex.length===0 && !currentGame){
+    return `<div class="card"><div class="empty"><span class="ball">🏀</span>No games recorded yet. Start one from the Live Game tab.</div></div>`;
+  }
+  const rows = [...gamesIndex].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  return `<div class="card">
+    <h2>Season schedule</h2>
+    ${rows.map(g => {
+      const res = g.final ? (g.homeScore>g.awayScore?'W':(g.homeScore<g.awayScore?'L':'T')) : 'LIVE';
+      const prefix = g.homeAway==='away' ? '@' : 'vs';
+      return `<div class="game-row" data-view-game="${g.id}">
+        <div>
+          <div class="opp">${prefix} ${escapeHtml(g.opponent||'Opponent')}</div>
+          <div class="date">${g.date||''}${g.excludeFromSeason ? ' · <span class="pill" style="background:var(--panel-2);color:var(--paper-dim);">Excluded</span>' : ''}</div>
+        </div>
+        <div class="res ${res}">${g.homeScore}–${g.awayScore} · ${res}</div>
+      </div>`;
+    }).join('')}
+  </div>
+  <div id="gameDetail"></div>`;
+}
+
+async function renderGameDetail(gameId){
+  const g = await loadGame(gameId);
+  if(!g) return;
+  const box = document.getElementById('gameDetail');
+  const rows = roster.players.map(p => {
+    const s = g.stats[p.id]; if(!s) return null;
+    const pts = QUARTERS.reduce((sum,q)=>sum+playerPoints(s[q]),0);
+    const oreb = QUARTERS.reduce((sum,q)=>sum+s[q].oreb,0);
+    const dreb = QUARTERS.reduce((sum,q)=>sum+s[q].dreb,0);
+    const to = QUARTERS.reduce((sum,q)=>sum+s[q].to,0);
+    const fouls = QUARTERS.reduce((sum,q)=>sum+s[q].fouls,0);
+    const sec = QUARTERS.reduce((sum,q)=>sum+s[q].seconds,0);
+    return `<tr><td>${escapeHtml(p.name)}</td><td>${pts}</td><td>${oreb}</td><td>${dreb}</td><td>${to}</td><td>${fouls}</td><td>${fmtClock(sec)}</td></tr>`;
+  }).filter(Boolean).join('');
+
+  const quarterTable = QUARTERS.map(q => {
+    const homeQ = Object.values(g.stats).reduce((sum,s)=>sum+playerPoints(s[q]),0);
+    const awayQ = playerPoints((g.oppStats && g.oppStats[q]) || emptyQuarterStat());
+    return `<tr><td>${QLABELS[q]}</td><td>${homeQ}</td><td>${awayQ}</td></tr>`;
+  }).join('');
+
+  const prefix = g.homeAway==='away' ? '@' : 'vs';
+  const usTag = g.homeAway==='away' ? 'Away' : 'Home';
+  const oppTag = g.homeAway==='away' ? 'Home' : 'Away';
+
+  box.innerHTML = `
+  <div class="card">
+    <button class="backlink" id="closeDetail">← Back to schedule</button>
+    <h2>${escapeHtml(currentTeamName())} ${prefix} ${escapeHtml(g.opponent||'Opponent')} — ${g.date||''}</h2>
+    <div style="display:flex; gap:0.5rem; margin-bottom:0.9rem;">
+      <button class="btn secondary" id="toggleExcludeBtn">${g.excludeFromSeason ? 'Include in season stats' : 'Exclude from season stats'}</button>
+      <button class="btn danger" id="deleteGameBtn">Delete game</button>
+    </div>
+    <div class="section-label">Score by quarter</div>
+    <div class="table-wrap"><table><tr><th>Qtr</th><th>${escapeHtml(currentTeamName())} (${usTag})</th><th>${escapeHtml(g.opponent||'Opp')} (${oppTag})</th></tr>${quarterTable}
+      <tr><th>Total</th><th>${homeScore(g)}</th><th>${awayScore(g)}</th></tr></table></div>
+    <div class="section-label">Team comparison — all categories</div>
+    ${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}
+    <div class="section-label">Box score</div>
+    <div class="table-wrap"><table>
+      <tr><th>Player</th><th>PTS</th><th>OREB</th><th>DREB</th><th>TO</th><th>FLS</th><th>MIN</th></tr>
+      ${rows}
+    </table></div>
+  </div>`;
+
+  document.getElementById('toggleExcludeBtn').onclick = async () => {
+    g.excludeFromSeason = !g.excludeFromSeason;
+    const res = await saveJSON(gameKey(g.id), g);
+    gameCache[g.id] = g;
+    if(g.id === currentGame?.id) currentGame.excludeFromSeason = g.excludeFromSeason;
+    const idx = gamesIndex.findIndex(x => x.id === g.id);
+    if(idx >= 0) gamesIndex[idx].excludeFromSeason = g.excludeFromSeason;
+    await persistGamesIndex();
+    if(!res.ok){ alert('Could not save: ' + res.error); g.excludeFromSeason = !g.excludeFromSeason; }
+    renderGameDetail(g.id);
+  };
+  document.getElementById('deleteGameBtn').onclick = async () => {
+    if(!confirm('Delete this game permanently? This cannot be undone.')) return;
+    await deleteDoc(doc(db, STORAGE_COLLECTION, gameKey(g.id))).catch(()=>{});
+    gamesIndex = gamesIndex.filter(x => x.id !== g.id);
+    await persistGamesIndex();
+    delete gameCache[g.id];
+    if(currentGame?.id === g.id){
+      currentGame = null;
+      selectedPlayerId = null; showSubPicker = false;
+      activeGameId = null;
+      await saveJSON(teamKey('active-game-id'), null);
+    }
+    document.getElementById('gameDetail').innerHTML = '';
+    render();
+  };
+  document.getElementById('closeDetail').onclick = () => { document.getElementById('gameDetail').innerHTML=''; };
+}
+
+/* ---------------------------------------------------------------
+   SEASON STATS TAB
+--------------------------------------------------------------- */
+async function renderSeason(){
+  const app = document.getElementById('app');
+  app.innerHTML = `<div class="card"><div class="empty">Loading season totals…</div></div>`;
+  // Fetch every game in parallel instead of one-by-one — much faster over
+  // a network API like Apps Script, where each call has real latency.
+  const loaded = await Promise.all(gamesIndex.map(g => loadGame(g.id)));
+  const allGames = loaded.filter(g => g && !g.excludeFromSeason);
+  const totals = {};
+  roster.players.forEach(p => totals[p.id] = { pts:0, oreb:0, dreb:0, to:0, fouls:0, seconds:0, fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0, games:new Set() });
+  allGames.forEach(g => {
+    Object.entries(g.stats).forEach(([pid, s]) => {
+      if(!totals[pid]) return;
+      let playedThisGame = false;
+      QUARTERS.forEach(q => {
+        const qs = s[q];
+        totals[pid].pts += playerPoints(qs);
+        totals[pid].oreb += qs.oreb; totals[pid].dreb += qs.dreb;
+        totals[pid].to += qs.to; totals[pid].fouls += qs.fouls;
+        totals[pid].seconds += qs.seconds;
+        totals[pid].fgm2 += qs.fgm2; totals[pid].fga2 += qs.fga2;
+        totals[pid].fgm3 += qs.fgm3; totals[pid].fga3 += qs.fga3;
+        totals[pid].ftm += qs.ftm; totals[pid].fta += qs.fta;
+        if(qs.seconds>0) playedThisGame = true;
+      });
+      if(playedThisGame) totals[pid].games.add(g.id);
+    });
+  });
+
+  const rows = roster.players.map(p => {
+    const t = totals[p.id]; if(!t) return '';
+    const gp = t.games.size || 0;
+    const ppg = gp ? (t.pts/gp).toFixed(1) : '0.0';
+    const fg2pct = t.fga2 ? Math.round(100*t.fgm2/t.fga2) : 0;
+    const fg3pct = t.fga3 ? Math.round(100*t.fgm3/t.fga3) : 0;
+    const ftpct = t.fta ? Math.round(100*t.ftm/t.fta) : 0;
+    const mpg = gp ? fmtClock(Math.round(t.seconds/gp)) : '00:00';
+    return `<tr>
+      <td>${escapeHtml(p.name)}</td><td>${gp}</td><td>${t.pts}</td><td>${ppg}</td>
+      <td>${t.oreb+t.dreb}</td><td>${t.to}</td><td>${t.fouls}</td>
+      <td>${fg2pct}%</td><td>${fg3pct}%</td><td>${ftpct}%</td><td>${mpg}</td>
+    </tr>`;
+  }).join('');
+
+  const excludedCount = gamesIndex.length - allGames.length;
+  app.innerHTML = `
+  <div class="card">
+    <h2>${escapeHtml(currentTeamName())} — season totals</h2>
+    ${excludedCount > 0 ? `<div class="section-label" style="margin-top:-0.4rem;">${excludedCount} game${excludedCount===1?'':'s'} excluded from these totals</div>` : ''}
+    ${allGames.length===0 ? `<div class="empty"><span class="ball">🏀</span>No games recorded yet this season.</div>` : `
+    <div class="table-wrap"><table>
+      <tr><th>Player</th><th>GP</th><th>PTS</th><th>PPG</th><th>REB</th><th>TO</th><th>FLS</th><th>2P%</th><th>3P%</th><th>FT%</th><th>MPG</th></tr>
+      ${rows}
+    </table></div>`}
+  </div>`;
+}
+
+/* ---------------------------------------------------------------
+   EVENT HANDLERS
+--------------------------------------------------------------- */
+function attachHandlers(){
+  // Live tab's inline team picker (mirrors the top-bar selector)
+  const liveTeamSel = document.getElementById('liveTeamSelector');
+  if(liveTeamSel) liveTeamSel.onchange = (e) => switchTeam(e.target.value);
+
+  // Roster
+  const saveTeamBtn = document.getElementById('saveTeamName');
+  if(saveTeamBtn) saveTeamBtn.onclick = async () => {
+    const newName = document.getElementById('teamNameInput').value.trim() || 'My Team';
+    const team = teams.find(t => t.id === activeTeamId);
+    const prevName = team.name;
+    team.name = newName;
+    const res = await saveJSON('teams', teams);
+    if(res.ok){
+      renderTeamSelector();
+    } else {
+      team.name = prevName; // don't pretend it saved
+    }
+    flashStatus('teamNameStatus', res);
+  };
+  const deleteTeamBtn = document.getElementById('deleteTeamBtn');
+  if(deleteTeamBtn) deleteTeamBtn.onclick = async () => {
+    if(teams.length <= 1){ alert('You need at least one team.'); return; }
+    if(!confirm(`Delete ${currentTeamName()} and all its games? This can't be undone.`)) return;
+    const idToDelete = activeTeamId;
+    await Promise.all(gamesIndex.map(g => deleteDoc(doc(db, STORAGE_COLLECTION, gameKey(g.id))).catch(()=>{})));
+    await Promise.all([
+      deleteDoc(doc(db, STORAGE_COLLECTION, teamKey('roster'))).catch(()=>{}),
+      deleteDoc(doc(db, STORAGE_COLLECTION, teamKey('games-index'))).catch(()=>{}),
+      deleteDoc(doc(db, STORAGE_COLLECTION, teamKey('active-game-id'))).catch(()=>{})
+    ]);
+    teams = teams.filter(t => t.id !== idToDelete);
+    await saveJSON('teams', teams);
+    activeTeamId = teams[0].id;
+    await saveJSON('active-team-id', activeTeamId);
+    renderTeamSelector();
+    await loadTeamData();
+    setTab('roster');
+  };
+  const addPlayerBtn = document.getElementById('addPlayerBtn');
+  if(addPlayerBtn) addPlayerBtn.onclick = async () => {
+    const nameInput = document.getElementById('newPlayerName');
+    const numInput = document.getElementById('newPlayerNum');
+    const name = nameInput.value.trim();
+    if(!name) return;
+    const newPlayer = { id:'p_'+Date.now(), name, number: numInput.value ? parseInt(numInput.value) : null };
+    roster.players.push(newPlayer);
+    const res = await saveJSON(teamKey('roster'), roster);
+    if(!res.ok){
+      roster.players = roster.players.filter(p => p.id !== newPlayer.id);
+      alert('Could not save that player: ' + res.error);
+    }
+    render();
+  };
+  document.querySelectorAll('[data-remove-player]').forEach(btn => {
+    btn.onclick = async () => {
+      const removed = roster.players.find(p => p.id === btn.dataset.removePlayer);
+      roster.players = roster.players.filter(p => p.id !== btn.dataset.removePlayer);
+      const res = await saveJSON(teamKey('roster'), roster);
+      if(!res.ok && removed){
+        roster.players.push(removed);
+        alert('Could not remove that player: ' + res.error);
+      }
+      render();
+    };
+  });
+
+  // Live: start game
+  const startBtn = document.getElementById('startGameBtn');
+  if(startBtn) startBtn.onclick = async () => {
+    const opp = document.getElementById('oppInput').value.trim() || 'Opponent';
+    const date = document.getElementById('dateInput').value;
+    const homeAway = document.getElementById('homeAwaySelect').value;
+    const quarterMinutes = document.getElementById('quarterMinInput').value;
+    const otMinutes = document.getElementById('otMinInput').value;
+    currentGame = newGame(opp, date, homeAway, quarterMinutes, otMinutes);
+    selectedPlayerId = null; showSubPicker = false;
+    activeGameId = currentGame.id;
+    await saveJSON(teamKey('active-game-id'), activeGameId);
+    updateIndexSummary();
+    await persistGamesIndex();
+    await flushGame();
+    render();
+  };
+
+  // Live: quarter tabs
+  document.querySelectorAll('[data-quarter]').forEach(btn => {
+    btn.onclick = () => {
+      if(!currentGame) return;
+      pauseClock();
+      currentGame.currentQuarter = btn.dataset.quarter;
+      queueSaveGame();
+      render();
+    };
+  });
+
+  // Live: clock toggle
+  const clockToggle = document.getElementById('clockToggle');
+  if(clockToggle) clockToggle.onclick = () => {
+    if(currentGame.clockRunning) pauseClock(); else startClock();
+    render();
+  };
+
+  // Live: substitution picker open/close
+  const subToggleBtn = document.getElementById('subToggleBtn');
+  if(subToggleBtn) subToggleBtn.onclick = () => { showSubPicker = !showSubPicker; render(); };
+  const closeSubPicker = document.getElementById('closeSubPicker');
+  if(closeSubPicker) closeSubPicker.onclick = () => { showSubPicker = false; render(); };
+
+  // Live: select a player on court (whole tile, excluding the Sub out button)
+  document.querySelectorAll('[data-select-player]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if(e.target.closest('[data-sub-out]')) return;
+      selectedPlayerId = el.dataset.selectPlayer;
+      render();
+    });
+  });
+
+  // Live: sub a player out (frees a court slot)
+  document.querySelectorAll('[data-sub-out]').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const pid = btn.dataset.subOut;
+      currentGame.onCourt = currentGame.onCourt.filter(id => id !== pid);
+      if(selectedPlayerId === pid) selectedPlayerId = null;
+      queueSaveGame();
+      render();
+    };
+  });
+
+  // Live: sub a player in (blocked once 5 are already on court)
+  document.querySelectorAll('[data-sub-in]').forEach(btn => {
+    btn.onclick = () => {
+      if(currentGame.onCourt.length >= 5){
+        alert('Court is full — sub a player out first.');
+        return;
+      }
+      currentGame.onCourt.push(btn.dataset.subIn);
+      queueSaveGame();
+      render();
+    };
+  });
+
+  // Live: stat buttons — apply to whichever player (or the opponent) is selected
+  document.querySelectorAll('[data-field]').forEach(btn => {
+    btn.onclick = () => {
+      if(!selectedPlayerId) return;
+      const q = currentGame.currentQuarter;
+      const qs = selectedPlayerId === 'OPPONENT' ? currentGame.oppStats[q] : currentGame.stats[selectedPlayerId][q];
+      switch(btn.dataset.field){
+        case 'fgm2': qs.fgm2++; qs.fga2++; break;
+        case 'fga2miss': qs.fga2++; break;
+        case 'fgm3': qs.fgm3++; qs.fga3++; break;
+        case 'fga3miss': qs.fga3++; break;
+        case 'ftm': qs.ftm++; qs.fta++; break;
+        case 'ftamiss': qs.fta++; break;
+        case 'oreb': qs.oreb++; break;
+        case 'dreb': qs.dreb++; break;
+        case 'to': qs.to++; break;
+        case 'fouls': qs.fouls++; break;
+      }
+      queueSaveGame();
+      render();
+    };
+  });
+
+  // Live: end game
+  const endBtn = document.getElementById('endGameBtn');
+  if(endBtn) endBtn.onclick = async () => {
+    if(!confirm('End this game? Final stats will be saved to season history.')) return;
+    pauseClock();
+    currentGame.final = true;
+    updateIndexSummary();
+    await persistGamesIndex();
+    await flushGame();
+    const finishedGameId = currentGame.id;
+    activeGameId = null;
+    await saveJSON(teamKey('active-game-id'), null);
+    currentGame = null;
+    selectedPlayerId = null; showSubPicker = false;
+    setTab('history');
+    renderGameDetail(finishedGameId); // jump straight to the final summary, not just the schedule list
+  };
+
+  // History: view game
+  document.querySelectorAll('[data-view-game]').forEach(row => {
+    row.onclick = () => renderGameDetail(row.dataset.viewGame);
+  });
+}
+
+/* ---------------------------------------------------------------
+   CLOCK
+--------------------------------------------------------------- */
+let autosaveTimer = null;
+
+function startClock(){
+  currentGame.clockRunning = true;
+  clearInterval(clockTimer);
+  clockTimer = setInterval(() => {
+    const q = currentGame.currentQuarter;
+    if(currentGame.quarterRemaining[q] > 0) currentGame.quarterRemaining[q]--;
+    currentGame.onCourt.forEach(pid => {
+      if(currentGame.stats[pid]) currentGame.stats[pid][q].seconds++;
+    });
+    updateClockDisplayOnly();
+    // Note: still doesn't save every single tick, just to keep write volume
+    // sane — the 4s autosave interval below covers the clock, and every
+    // stat/roster action saves promptly (500ms debounce) on its own.
+    if(currentGame.quarterRemaining[q] <= 0){
+      pauseClock(); // auto-stop when the quarter clock hits zero
+      render();
+    }
+  }, 1000);
+  clearInterval(autosaveTimer);
+  autosaveTimer = setInterval(flushGame, 4000);
+}
+function pauseClock(){
+  currentGame.clockRunning = false;
+  clearInterval(clockTimer);
+  clearInterval(autosaveTimer);
+  clockTimer = null;
+  autosaveTimer = null;
+  flushGame();
+}
+function updateClockDisplayOnly(){
+  // lightweight update without full re-render, to keep buttons responsive
+  const q = currentGame.currentQuarter;
+  const disp = document.getElementById('clockDisplay');
+  if(disp) disp.textContent = fmtClock(currentGame.quarterRemaining[q]);
+  // Live game-time label on each on-court tile
+  document.querySelectorAll('.court-slot').forEach(el => {
+    const pid = el.dataset.selectPlayer;
+    const timeEl = el.querySelector('.cs-time');
+    if(pid && pid !== 'OPPONENT' && timeEl) timeEl.textContent = fmtClock(totalPlayerStat(pid,'seconds'));
+  });
+  // Live meta line in the panel for whoever is selected (player or opponent)
+  if(selectedPlayerId){
+    const metaEl = document.getElementById('selPlayerMeta');
+    if(metaEl){
+      if(selectedPlayerId === 'OPPONENT'){
+        const qs = currentGame.oppStats[q];
+        metaEl.innerHTML = `<span class="pc-pts">${playerPoints(qs)} PTS (${QLABELS[q]})</span>`;
+      } else if(currentGame.stats[selectedPlayerId]){
+        const qs = currentGame.stats[selectedPlayerId][q];
+        metaEl.innerHTML = `<span class="pc-pts">${playerPoints(qs)} PTS (${QLABELS[q]})</span><span>Q time ${fmtClock(qs.seconds)}</span><span>Game time ${fmtClock(totalPlayerStat(selectedPlayerId,'seconds'))}</span>`;
+      }
+    }
+  }
+}
+
+/* ---------------------------------------------------------------
+   UTIL
+--------------------------------------------------------------- */
+function escapeHtml(str){ return (str??'').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeAttr(str){ return escapeHtml(str); }
+
+init();
+</script>
+</body>
+</html>
