@@ -1057,11 +1057,13 @@ function attachHandlers(){
     updateIndexSummary();
     await persistGamesIndex();
     await flushGame();
+    const finishedGameId = currentGame.id;
     activeGameId = null;
     await saveJSON(teamKey('active-game-id'), null);
     currentGame = null;
     selectedPlayerId = null; showSubPicker = false;
     setTab('history');
+    renderGameDetail(finishedGameId); // jump straight to the final summary, not just the schedule list
   };
 
   // History: view game
