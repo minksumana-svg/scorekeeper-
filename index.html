@@ -304,6 +304,8 @@ function fmtClock(sec){
 /* ---------------------------------------------------------------
    SAVE / SYNC
 --------------------------------------------------------------- */
+const gameCache = {}; // id -> game object, avoids refetching games already loaded this session
+
 function queueSaveGame(){
   clearTimeout(saveDebounce);
   saveDebounce = setTimeout(flushGame, 1200);
@@ -311,12 +313,21 @@ function queueSaveGame(){
 async function flushGame(){
   if(!currentGame) return;
   const res = await saveJSON('game:' + currentGame.id, currentGame);
+  gameCache[currentGame.id] = currentGame;
   const banner = document.getElementById('liveSaveWarning');
   if(banner) banner.classList.toggle('show', !res.ok);
   return res;
 }
 async function persistGamesIndex(){
   await saveJSON('games-index', gamesIndex);
+}
+// Cached, dedup'd game loader — use this instead of raw loadJSON('game:'+id, ...)
+async function loadGame(id){
+  if(id === currentGame?.id) return currentGame;
+  if(gameCache[id]) return gameCache[id];
+  const g = await loadJSON('game:' + id, null);
+  if(g) gameCache[id] = g;
+  return g;
 }
 function updateIndexSummary(){
   const idx = gamesIndex.findIndex(g => g.id === currentGame.id);
@@ -338,11 +349,17 @@ async function init(){
     dbReachable = false;
     console.error('database unreachable at startup', e);
   }
-  roster = await loadJSON('roster', { teamName:'My Team', players:[] });
-  gamesIndex = await loadJSON('games-index', []);
-  activeGameId = await loadJSON('active-game-id', null);
+  // Load the three independent keys in parallel instead of one-at-a-time.
+  const [rosterRes, gamesIndexRes, activeIdRes] = await Promise.all([
+    loadJSON('roster', { teamName:'My Team', players:[] }),
+    loadJSON('games-index', []),
+    loadJSON('active-game-id', null)
+  ]);
+  roster = rosterRes;
+  gamesIndex = gamesIndexRes;
+  activeGameId = activeIdRes;
   if(activeGameId){
-    currentGame = await loadJSON('game:' + activeGameId, null);
+    currentGame = await loadGame(activeGameId);
     if(currentGame) activeTab = 'live';
   }
   document.getElementById('teamNameDisplay').textContent = roster.teamName || 'Courtside';
@@ -524,7 +541,7 @@ function renderHistory(){
 }
 
 async function renderGameDetail(gameId){
-  const g = (gameId === currentGame?.id) ? currentGame : await loadJSON('game:'+gameId, null);
+  const g = await loadGame(gameId);
   if(!g) return;
   const box = document.getElementById('gameDetail');
   const rows = roster.players.map(p => {
@@ -564,11 +581,10 @@ async function renderGameDetail(gameId){
 async function renderSeason(){
   const app = document.getElementById('app');
   app.innerHTML = `<div class="card"><div class="empty">Loading season totals…</div></div>`;
-  const allGames = [];
-  for(const g of gamesIndex){
-    const full = (g.id===currentGame?.id) ? currentGame : await loadJSON('game:'+g.id, null);
-    if(full) allGames.push(full);
-  }
+  // Fetch every game in parallel instead of one-by-one — much faster over
+  // a network API like Apps Script, where each call has real latency.
+  const loaded = await Promise.all(gamesIndex.map(g => loadGame(g.id)));
+  const allGames = loaded.filter(Boolean);
   const totals = {};
   roster.players.forEach(p => totals[p.id] = { pts:0, oreb:0, dreb:0, to:0, fouls:0, seconds:0, fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0, games:new Set() });
   allGames.forEach(g => {
