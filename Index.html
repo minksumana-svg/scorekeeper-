@@ -19,6 +19,7 @@
     --panel:#241a12;
     --panel-2:#2e2118;
     --accent:#ffb648;
+    --away-accent:#6c93c9;
   }
   *{box-sizing:border-box;}
   body{
@@ -169,6 +170,23 @@
   .stat-btn.other{border-color:var(--wood);}
   .stat-btn:active{transform:scale(0.95);}
 
+  .bar-chart{display:flex; flex-direction:column; gap:0.7rem; margin:0.5rem 0;}
+  .bar-cat{font-size:0.68rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--wood-light); font-weight:700; margin-bottom:0.25rem;}
+  .bar-line{display:grid; grid-template-columns:1fr 42px; align-items:center; gap:0.5rem; margin-bottom:0.2rem;}
+  .bar-track{background:var(--court); border-radius:6px; height:0.85rem; overflow:hidden;}
+  .bar-fill{height:100%; border-radius:6px; transition:width 0.2s ease;}
+  .bar-fill.home{background:var(--accent);}
+  .bar-fill.away{background:var(--away-accent);}
+  .bar-value{font-family:'Space Mono',monospace; font-size:0.72rem; text-align:right; color:var(--paper);}
+  .bar-legend{display:flex; align-items:center; gap:0.3rem; font-size:0.72rem; color:var(--paper-dim); margin-top:0.3rem;}
+  .legend-dot{display:inline-block; width:0.6rem; height:0.6rem; border-radius:50%; background:var(--accent);}
+  .legend-dot.away{background:var(--away-accent);}
+
+  .clock-edit-btn{
+    background:none; border:none; color:var(--paper-dim); font-size:0.8rem;
+    padding:0.1rem 0.3rem; margin-top:0.1rem; cursor:pointer;
+  }
+
   table{width:100%; border-collapse:collapse; font-size:0.8rem;}
   th,td{padding:0.4rem 0.35rem; text-align:center; border-bottom:1px solid var(--court-line);}
   th{color:var(--wood-light); font-size:0.65rem; text-transform:uppercase; letter-spacing:0.03em;}
@@ -297,7 +315,7 @@ function currentTeamName(){
 function teamKey(base){ return base + ':' + activeTeamId; }
 function gameKey(gameId){ return 'game:' + activeTeamId + ':' + gameId; }
 
-const emptyQuarterStat = () => ({ fgm2:0, fga2:0, fgm3:0, fga3:0, ftm:0, fta:0, oreb:0, dreb:0, to:0, fouls:0, seconds:0 });
+const emptyQuarterStat = () => ({ fgm2:0, fga2:0, fgm3:0, fga3:0, ftm:0, fta:0, oreb:0, dreb:0, to:0, fouls:0, blk:0, stl:0, plusMinus:0, seconds:0 });
 const QUARTERS = ['q1','q2','q3','q4','ot'];
 const QLABELS = {q1:'Q1', q2:'Q2', q3:'Q3', q4:'Q4', ot:'OT'};
 
@@ -341,11 +359,11 @@ function awayScore(game){
 // the home-vs-away comparison table. statsSource is either a per-player map
 // (home) or a per-quarter map (opponent); pass which kind via isPerPlayer.
 function aggregateTeamStats(game, isHome){
-  const totals = { fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0,oreb:0,dreb:0,to:0,fouls:0 };
+  const totals = { fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0,oreb:0,dreb:0,to:0,fouls:0,blk:0,stl:0 };
   const addQ = (qs) => {
     totals.fgm2+=qs.fgm2; totals.fga2+=qs.fga2; totals.fgm3+=qs.fgm3; totals.fga3+=qs.fga3;
     totals.ftm+=qs.ftm; totals.fta+=qs.fta; totals.oreb+=qs.oreb; totals.dreb+=qs.dreb;
-    totals.to+=qs.to; totals.fouls+=qs.fouls;
+    totals.to+=qs.to; totals.fouls+=qs.fouls; totals.blk+=(qs.blk||0); totals.stl+=(qs.stl||0);
   };
   if(isHome){
     Object.values(game.stats).forEach(s => QUARTERS.forEach(q => addQ(s[q])));
@@ -355,25 +373,55 @@ function aggregateTeamStats(game, isHome){
   return totals;
 }
 function pct(made, att){ return att ? Math.round(100*made/att) : 0; }
-// Builds the Home vs Away "all categories" comparison table.
-function comparisonTableHtml(game, usName, oppName){
+// Shared category list so the table and bar chart always agree.
+function comparisonRows(game){
   const h = aggregateTeamStats(game, true), a = aggregateTeamStats(game, false);
   const hPts = h.fgm2*2+h.fgm3*3+h.ftm, aPts = a.fgm2*2+a.fgm3*3+a.ftm;
-  const rows = [
-    ['PTS', hPts, aPts],
-    ['REB', h.oreb+h.dreb, a.oreb+a.dreb],
-    ['OREB', h.oreb, a.oreb],
-    ['DREB', h.dreb, a.dreb],
-    ['TO', h.to, a.to],
-    ['FLS', h.fouls, a.fouls],
-    ['FG%', pct(h.fgm2+h.fgm3, h.fga2+h.fga3)+'%', pct(a.fgm2+a.fgm3, a.fga2+a.fga3)+'%'],
-    ['3P%', pct(h.fgm3,h.fga3)+'%', pct(a.fgm3,a.fga3)+'%'],
-    ['FT%', pct(h.ftm,h.fta)+'%', pct(a.ftm,a.fta)+'%'],
+  return [
+    ['PTS', hPts, aPts, false],
+    ['REB', h.oreb+h.dreb, a.oreb+a.dreb, false],
+    ['OREB', h.oreb, a.oreb, false],
+    ['DREB', h.dreb, a.dreb, false],
+    ['STL', h.stl, a.stl, false],
+    ['BLK', h.blk, a.blk, false],
+    ['TO', h.to, a.to, false],
+    ['FLS', h.fouls, a.fouls, false],
+    ['FG%', pct(h.fgm2+h.fgm3, h.fga2+h.fga3), pct(a.fgm2+a.fgm3, a.fga2+a.fga3), true],
+    ['3P%', pct(h.fgm3,h.fga3), pct(a.fgm3,a.fga3), true],
+    ['FT%', pct(h.ftm,h.fta), pct(a.ftm,a.fta), true],
   ];
+}
+// Builds the Home vs Away "all categories" comparison table.
+function comparisonTableHtml(game, usName, oppName){
+  const rows = comparisonRows(game);
   return `<div class="table-wrap"><table>
     <tr><th>Category</th><th>${escapeHtml(usName)}</th><th>${escapeHtml(oppName)}</th></tr>
-    ${rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('')}
+    ${rows.map(([label,hv,av,isPct])=>`<tr><td>${label}</td><td>${hv}${isPct?'%':''}</td><td>${av}${isPct?'%':''}</td></tr>`).join('')}
   </table></div>`;
+}
+// Builds a simple horizontal bar-chart version of the same comparison, so
+// it's easy to see at a glance who's stronger in which category.
+function comparisonBarChartHtml(game, usName, oppName){
+  const rows = comparisonRows(game);
+  const bars = rows.map(([label,hv,av,isPct]) => {
+    const max = Math.max(hv, av, 1);
+    const hPct = Math.round(hv/max*100), aPct = Math.round(av/max*100);
+    const suffix = isPct ? '%' : '';
+    return `
+    <div class="bar-group">
+      <div class="bar-cat">${label}</div>
+      <div class="bar-line">
+        <div class="bar-track"><div class="bar-fill home" style="width:${hPct}%;"></div></div>
+        <div class="bar-value">${hv}${suffix}</div>
+      </div>
+      <div class="bar-line">
+        <div class="bar-track"><div class="bar-fill away" style="width:${aPct}%;"></div></div>
+        <div class="bar-value">${av}${suffix}</div>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="bar-chart">${bars}</div>
+  <div class="bar-legend"><span class="legend-dot home"></span>${escapeHtml(usName)} &nbsp; <span class="legend-dot away"></span>${escapeHtml(oppName)}</div>`;
 }
 function fmtClock(sec){
   const m = Math.floor(sec/60), s = sec%60;
@@ -688,7 +736,7 @@ function renderLive(){
         <h2>Recording for ${escapeHtml(selPlayer.name)}</h2>
         <div class="pc-meta" id="selPlayerMeta" style="margin-bottom:0.7rem;">
           <span class="pc-pts">${playerPoints(selQs)} PTS (${QLABELS[q]})</span>
-          ${isOpp ? '' : `<span>Q time ${fmtClock(selQs.seconds)}</span><span>Game time ${fmtClock(totalPlayerStat(selPlayer.id,'seconds'))}</span>`}
+          ${isOpp ? '' : `<span>Q time ${fmtClock(selQs.seconds)}</span><span>Game time ${fmtClock(totalPlayerStat(selPlayer.id,'seconds'))}</span><span>${totalPlayerStat(selPlayer.id,'plusMinus')>=0?'+':''}${totalPlayerStat(selPlayer.id,'plusMinus')} +/-</span>`}
         </div>
         <div class="stat-grid">
           <button class="stat-btn make" data-field="fgm2">2PT Make<span class="n">${selQs.fgm2}/${selQs.fga2}</span></button>
@@ -699,6 +747,8 @@ function renderLive(){
           <button class="stat-btn miss" data-field="ftamiss">FT Miss<span class="n">${selQs.fta-selQs.ftm}</span></button>
           <button class="stat-btn other" data-field="oreb">Off Reb<span class="n">${selQs.oreb}</span></button>
           <button class="stat-btn other" data-field="dreb">Def Reb<span class="n">${selQs.dreb}</span></button>
+          <button class="stat-btn other" data-field="stl">Steal<span class="n">${selQs.stl}</span></button>
+          <button class="stat-btn other" data-field="blk">Block<span class="n">${selQs.blk}</span></button>
           <button class="stat-btn other" data-field="to">Turnover<span class="n">${selQs.to}</span></button>
           <button class="stat-btn other" data-field="fouls">Foul<span class="n">${selQs.fouls}</span></button>
         </div>` : `<div class="empty">Tap a player — or the opponent tile — above to record stats.</div>`}
@@ -712,6 +762,7 @@ function renderLive(){
     <div class="sb-team"><div class="sb-tag">${g.homeAway==='away'?'AWAY':'HOME'}</div><div class="label">${escapeHtml(currentTeamName())}</div><div class="score mono">${hs}</div></div>
     <div class="sb-mid">
       <div class="clock mono" id="clockDisplay">${fmtClock(remaining)}</div>
+      <button class="clock-edit-btn" id="editClockBtn" title="Edit clock" aria-label="Edit clock">✏️ edit</button>
       <div class="qtag">${quarterOver ? `END OF ${QLABELS[q]}` : QLABELS[q]}${g.clockRunning?' · LIVE':''}</div>
     </div>
     <div class="sb-team"><div class="sb-tag">${g.homeAway==='away'?'HOME':'AWAY'}</div><div class="label">${escapeHtml(g.opponent||'Opponent')}</div><div class="score mono">${as}</div></div>
@@ -732,6 +783,7 @@ function renderLive(){
   <div class="card">
     <h2>Team comparison</h2>
     ${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}
+    ${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
   </div>
   `;
 }
@@ -765,16 +817,33 @@ async function renderGameDetail(gameId){
   const g = await loadGame(gameId);
   if(!g) return;
   const box = document.getElementById('gameDetail');
-  const rows = roster.players.map(p => {
+  const playerRows = roster.players.map(p => {
     const s = g.stats[p.id]; if(!s) return null;
     const pts = QUARTERS.reduce((sum,q)=>sum+playerPoints(s[q]),0);
     const oreb = QUARTERS.reduce((sum,q)=>sum+s[q].oreb,0);
     const dreb = QUARTERS.reduce((sum,q)=>sum+s[q].dreb,0);
+    const stl = QUARTERS.reduce((sum,q)=>sum+(s[q].stl||0),0);
+    const blk = QUARTERS.reduce((sum,q)=>sum+(s[q].blk||0),0);
     const to = QUARTERS.reduce((sum,q)=>sum+s[q].to,0);
     const fouls = QUARTERS.reduce((sum,q)=>sum+s[q].fouls,0);
     const sec = QUARTERS.reduce((sum,q)=>sum+s[q].seconds,0);
-    return `<tr><td>${escapeHtml(p.name)}</td><td>${pts}</td><td>${oreb}</td><td>${dreb}</td><td>${to}</td><td>${fouls}</td><td>${fmtClock(sec)}</td></tr>`;
-  }).filter(Boolean).join('');
+    const plusMinus = QUARTERS.reduce((sum,q)=>sum+(s[q].plusMinus||0),0);
+    return { name:p.name, pts, oreb, dreb, stl, blk, to, fouls, sec, plusMinus };
+  }).filter(Boolean).sort((a,b) => b.pts - a.pts); // descending by points
+
+  const rows = playerRows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.oreb}</td><td>${r.dreb}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td></tr>`).join('');
+
+  const teamTotals = aggregateTeamStats(g, true);
+  const oppTotals = aggregateTeamStats(g, false);
+  const teamPts = teamTotals.fgm2*2 + teamTotals.fgm3*3 + teamTotals.ftm;
+  const oppPts = oppTotals.fgm2*2 + oppTotals.fgm3*3 + oppTotals.ftm;
+  const totalsRows = `
+    <tr style="font-weight:700; border-top:2px solid var(--wood);">
+      <td>${escapeHtml(currentTeamName())} Total</td><td>${teamPts}</td><td>${teamTotals.oreb}</td><td>${teamTotals.dreb}</td><td>${teamTotals.stl}</td><td>${teamTotals.blk}</td><td>${teamTotals.to}</td><td>${teamTotals.fouls}</td><td>—</td><td>—</td>
+    </tr>
+    <tr style="font-weight:700;">
+      <td>${escapeHtml(g.opponent||'Opponent')} Total</td><td>${oppPts}</td><td>${oppTotals.oreb}</td><td>${oppTotals.dreb}</td><td>${oppTotals.stl}</td><td>${oppTotals.blk}</td><td>${oppTotals.to}</td><td>${oppTotals.fouls}</td><td>—</td><td>—</td>
+    </tr>`;
 
   const quarterTable = QUARTERS.map(q => {
     const homeQ = Object.values(g.stats).reduce((sum,s)=>sum+playerPoints(s[q]),0);
@@ -799,10 +868,12 @@ async function renderGameDetail(gameId){
       <tr><th>Total</th><th>${homeScore(g)}</th><th>${awayScore(g)}</th></tr></table></div>
     <div class="section-label">Team comparison — all categories</div>
     ${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}
-    <div class="section-label">Box score</div>
+    ${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
+    <div class="section-label">Box score — sorted by points</div>
     <div class="table-wrap"><table>
-      <tr><th>Player</th><th>PTS</th><th>OREB</th><th>DREB</th><th>TO</th><th>FLS</th><th>MIN</th></tr>
+      <tr><th>Player</th><th>PTS</th><th>OREB</th><th>DREB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
       ${rows}
+      ${totalsRows}
     </table></div>
   </div>`;
 
@@ -1000,6 +1071,20 @@ function attachHandlers(){
     render();
   };
 
+  // Live: manually correct the quarter clock (timing mismatches happen)
+  const editClockBtn = document.getElementById('editClockBtn');
+  if(editClockBtn) editClockBtn.onclick = () => {
+    if(currentGame.clockRunning) pauseClock();
+    const q = currentGame.currentQuarter;
+    const input = prompt(`Set the ${QLABELS[q]} clock (MM:SS):`, fmtClock(currentGame.quarterRemaining[q]));
+    if(input === null) return;
+    const m = input.trim().match(/^(\d{1,3}):([0-5]?\d)$/);
+    if(!m){ alert('Enter time as MM:SS, e.g. 07:45'); return; }
+    currentGame.quarterRemaining[q] = parseInt(m[1])*60 + parseInt(m[2]);
+    queueSaveGame();
+    render();
+  };
+
   // Live: substitution picker open/close
   const subToggleBtn = document.getElementById('subToggleBtn');
   if(subToggleBtn) subToggleBtn.onclick = () => { showSubPicker = !showSubPicker; render(); };
@@ -1045,18 +1130,30 @@ function attachHandlers(){
     btn.onclick = () => {
       if(!selectedPlayerId) return;
       const q = currentGame.currentQuarter;
-      const qs = selectedPlayerId === 'OPPONENT' ? currentGame.oppStats[q] : currentGame.stats[selectedPlayerId][q];
+      const isOppSel = selectedPlayerId === 'OPPONENT';
+      const qs = isOppSel ? currentGame.oppStats[q] : currentGame.stats[selectedPlayerId][q];
+      let scored = 0; // points just scored, for +/- purposes
       switch(btn.dataset.field){
-        case 'fgm2': qs.fgm2++; qs.fga2++; break;
+        case 'fgm2': qs.fgm2++; qs.fga2++; scored = 2; break;
         case 'fga2miss': qs.fga2++; break;
-        case 'fgm3': qs.fgm3++; qs.fga3++; break;
+        case 'fgm3': qs.fgm3++; qs.fga3++; scored = 3; break;
         case 'fga3miss': qs.fga3++; break;
-        case 'ftm': qs.ftm++; qs.fta++; break;
+        case 'ftm': qs.ftm++; qs.fta++; scored = 1; break;
         case 'ftamiss': qs.fta++; break;
         case 'oreb': qs.oreb++; break;
         case 'dreb': qs.dreb++; break;
+        case 'stl': qs.stl++; break;
+        case 'blk': qs.blk++; break;
         case 'to': qs.to++; break;
         case 'fouls': qs.fouls++; break;
+      }
+      // +/-: every basket adjusts the running total for whoever is on court right now —
+      // up for our players when we score, down for our players when the opponent scores.
+      if(scored > 0){
+        const delta = isOppSel ? -scored : scored;
+        currentGame.onCourt.forEach(pid => {
+          if(currentGame.stats[pid]) currentGame.stats[pid][q].plusMinus += delta;
+        });
       }
       queueSaveGame();
       render();
