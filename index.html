@@ -131,20 +131,23 @@
   .opp-controls{display:flex; align-items:center; gap:0.5rem; margin-bottom:0.9rem;}
   .opp-controls .btn{flex:1;}
 
-  .player-card{
-    background:var(--panel-2); border:1px solid var(--court-line); border-radius:12px;
-    padding:0.7rem; margin-bottom:0.7rem;
+  .court-grid{display:flex; flex-direction:column; gap:0.5rem; margin-bottom:0.9rem;}
+  .court-slot{
+    display:flex; align-items:center; gap:0.6rem;
+    background:var(--panel-2); border:1px solid var(--court-line); border-radius:10px;
+    padding:0.55rem 0.7rem; cursor:pointer;
   }
-  .player-card.on-court{border-color:var(--make); box-shadow:0 0 0 1px var(--make) inset;}
-  .pc-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:0.55rem;}
-  .pc-name{display:flex; align-items:center; font-weight:700; font-size:0.95rem;}
-  .pc-meta{display:flex; align-items:center; gap:0.6rem; font-family:'Space Mono',monospace; font-size:0.78rem; color:var(--paper-dim);}
+  .court-slot.active{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset;}
+  .cs-info{display:flex; align-items:center; gap:0.5rem; font-weight:700; font-size:0.9rem; flex:1; min-width:0;}
+  .cs-name{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .cs-time{font-family:'Space Mono',monospace; font-size:0.78rem; color:var(--paper-dim); flex-shrink:0;}
+  .bench-list{display:flex; flex-direction:column; gap:0.5rem; margin-bottom:0.9rem;}
+  .bench-row{
+    display:flex; align-items:center; justify-content:space-between;
+    background:var(--panel); border:1px solid var(--court-line); border-radius:10px; padding:0.5rem 0.7rem;
+  }
+  .pc-meta{display:flex; align-items:center; gap:0.6rem; font-family:'Space Mono',monospace; font-size:0.78rem; color:var(--paper-dim); flex-wrap:wrap;}
   .pc-pts{color:var(--accent); font-weight:700;}
-  .toggle-in{
-    border:1px solid var(--court-line); background:var(--court); color:var(--paper-dim);
-    padding:0.3rem 0.7rem; border-radius:999px; font-size:0.72rem; font-weight:700; text-transform:uppercase;
-  }
-  .toggle-in.active{background:var(--make); color:#08260f; border-color:var(--make);}
   .stat-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:0.35rem;}
   .stat-btn{
     background:var(--court); border:1px solid var(--court-line); color:var(--paper);
@@ -271,6 +274,7 @@ let roster = { players: [] }; // scoped to activeTeamId
 let gamesIndex = []; // [{id,date,opponent,homeScore,awayScore,final}] — scoped to activeTeamId
 let activeGameId = null;
 let currentGame = null; // full game object when on live tab
+let selectedPlayerId = null; // which on-court player the control panel is recording for
 let activeTab = 'roster';
 let clockTimer = null;
 let saveDebounce = null;
@@ -408,6 +412,7 @@ async function loadTeamData(){
   gamesIndex = gamesIndexRes;
   activeGameId = activeGameIdRes;
   currentGame = null;
+  selectedPlayerId = null;
   if(activeGameId){
     currentGame = await loadGame(activeGameId);
   }
@@ -558,36 +563,57 @@ function renderLive(){
 
   const quarterTabs = QUARTERS.map(qk => `<button data-quarter="${qk}" class="${qk===q?'active':''}">${QLABELS[qk]}</button>`).join('');
 
-  const playerCards = roster.players.map(p => {
-    const qs = g.stats[p.id][q];
-    const onCourt = g.onCourt.includes(p.id);
-    const pts = playerPoints(qs);
-    const totalSec = totalPlayerStat(p.id,'seconds');
-    return `
-    <div class="player-card ${onCourt?'on-court':''}">
-      <div class="pc-head">
-        <span class="pc-name"><span class="player-num">${p.number ?? '–'}</span>${escapeHtml(p.name)}</span>
-        <button class="toggle-in ${onCourt?'active':''}" data-toggle-court="${p.id}">${onCourt?'On court':'Bench'}</button>
-      </div>
-      <div class="pc-meta">
-        <span class="pc-pts">${pts} PTS (${QLABELS[q]})</span>
-        <span>Q time ${fmtClock(qs.seconds)}</span>
-        <span>Game time ${fmtClock(totalSec)}</span>
-      </div>
-      <div class="stat-grid">
-        <button class="stat-btn make" data-stat="${p.id}:fgm2">2PT Make<span class="n">${qs.fgm2}/${qs.fga2}</span></button>
-        <button class="stat-btn miss" data-stat="${p.id}:fga2miss">2PT Miss<span class="n">${qs.fga2-qs.fgm2}</span></button>
-        <button class="stat-btn make" data-stat="${p.id}:fgm3">3PT Make<span class="n">${qs.fgm3}/${qs.fga3}</span></button>
-        <button class="stat-btn miss" data-stat="${p.id}:fga3miss">3PT Miss<span class="n">${qs.fga3-qs.fgm3}</span></button>
-        <button class="stat-btn make" data-stat="${p.id}:ftm">FT Make<span class="n">${qs.ftm}/${qs.fta}</span></button>
-        <button class="stat-btn miss" data-stat="${p.id}:ftamiss">FT Miss<span class="n">${qs.fta-qs.ftm}</span></button>
-        <button class="stat-btn other" data-stat="${p.id}:oreb">Off Reb<span class="n">${qs.oreb}</span></button>
-        <button class="stat-btn other" data-stat="${p.id}:dreb">Def Reb<span class="n">${qs.dreb}</span></button>
-        <button class="stat-btn other" data-stat="${p.id}:to">Turnover<span class="n">${qs.to}</span></button>
-        <button class="stat-btn other" data-stat="${p.id}:fouls">Foul<span class="n">${qs.fouls}</span></button>
-      </div>
-    </div>`;
-  }).join('');
+  // Selection bookkeeping: only an on-court player can be selected for stat entry.
+  if(selectedPlayerId && !g.onCourt.includes(selectedPlayerId)) selectedPlayerId = null;
+  if(!selectedPlayerId && g.onCourt.length > 0) selectedPlayerId = g.onCourt[0];
+
+  const onCourtPlayers = roster.players.filter(p => g.onCourt.includes(p.id));
+  const benchPlayers = roster.players.filter(p => !g.onCourt.includes(p.id));
+
+  const courtHtml = onCourtPlayers.length === 0
+    ? `<div class="empty" style="padding:1.2rem;"><span class="ball">🏀</span>No one on court yet — sub in up to 5 players from the bench below.</div>`
+    : `<div class="court-grid">${onCourtPlayers.map(p => `
+      <div class="court-slot ${p.id===selectedPlayerId?'active':''}" data-select-player="${p.id}">
+        <div class="cs-info">
+          <span class="player-num">${p.number ?? '–'}</span>
+          <span class="cs-name">${escapeHtml(p.name)}</span>
+        </div>
+        <span class="cs-time mono">${fmtClock(totalPlayerStat(p.id,'seconds'))}</span>
+        <button class="btn secondary" data-sub-out="${p.id}">Sub out</button>
+      </div>`).join('')}</div>`;
+
+  const benchHtml = benchPlayers.length === 0
+    ? `<div class="empty" style="padding:1rem;">Whole roster is on court.</div>`
+    : `<div class="bench-list">${benchPlayers.map(p => `
+      <div class="bench-row">
+        <span class="player-name"><span class="player-num">${p.number ?? '–'}</span>${escapeHtml(p.name)}</span>
+        <button class="btn secondary" data-sub-in="${p.id}">Sub in</button>
+      </div>`).join('')}</div>`;
+
+  const selPlayer = roster.players.find(p => p.id === selectedPlayerId);
+  const selQs = selPlayer ? g.stats[selPlayer.id][q] : null;
+
+  const controlPanel = selPlayer ? `
+  <div class="card">
+    <h2>Recording for ${escapeHtml(selPlayer.name)}</h2>
+    <div class="pc-meta" id="selPlayerMeta" style="margin-bottom:0.7rem;">
+      <span class="pc-pts">${playerPoints(selQs)} PTS (${QLABELS[q]})</span>
+      <span>Q time ${fmtClock(selQs.seconds)}</span>
+      <span>Game time ${fmtClock(totalPlayerStat(selPlayer.id,'seconds'))}</span>
+    </div>
+    <div class="stat-grid">
+      <button class="stat-btn make" data-field="fgm2">2PT Make<span class="n">${selQs.fgm2}/${selQs.fga2}</span></button>
+      <button class="stat-btn miss" data-field="fga2miss">2PT Miss<span class="n">${selQs.fga2-selQs.fgm2}</span></button>
+      <button class="stat-btn make" data-field="fgm3">3PT Make<span class="n">${selQs.fgm3}/${selQs.fga3}</span></button>
+      <button class="stat-btn miss" data-field="fga3miss">3PT Miss<span class="n">${selQs.fga3-selQs.fgm3}</span></button>
+      <button class="stat-btn make" data-field="ftm">FT Make<span class="n">${selQs.ftm}/${selQs.fta}</span></button>
+      <button class="stat-btn miss" data-field="ftamiss">FT Miss<span class="n">${selQs.fta-selQs.ftm}</span></button>
+      <button class="stat-btn other" data-field="oreb">Off Reb<span class="n">${selQs.oreb}</span></button>
+      <button class="stat-btn other" data-field="dreb">Def Reb<span class="n">${selQs.dreb}</span></button>
+      <button class="stat-btn other" data-field="to">Turnover<span class="n">${selQs.to}</span></button>
+      <button class="stat-btn other" data-field="fouls">Foul<span class="n">${selQs.fouls}</span></button>
+    </div>
+  </div>` : `<div class="card"><div class="empty">Tap a player on court above to record stats for them.</div></div>`;
 
   return teamPicker + `
   <div class="storage-banner" id="liveSaveWarning">⚠️ The last stat update didn't save — check your connection. Keep playing; I'll keep retrying, but write down the score as backup.</div>
@@ -615,8 +641,13 @@ function renderLive(){
     </div>
   </div>
 
-  <div class="section-label">Players — tap "On court" to run their clock, then log stats</div>
-  ${playerCards}
+  <div class="section-label">On court (${onCourtPlayers.length}/5)</div>
+  ${courtHtml}
+
+  ${controlPanel}
+
+  <div class="section-label">Bench — tap "Sub in" to bring a player on (max 5 on court)</div>
+  ${benchHtml}
   `;
 }
 
@@ -706,6 +737,7 @@ async function renderGameDetail(gameId){
     delete gameCache[g.id];
     if(currentGame?.id === g.id){
       currentGame = null;
+      selectedPlayerId = null;
       activeGameId = null;
       await saveJSON(teamKey('active-game-id'), null);
     }
@@ -851,6 +883,7 @@ function attachHandlers(){
     const date = document.getElementById('dateInput').value;
     const homeAway = document.getElementById('homeAwaySelect').value;
     currentGame = newGame(opp, date, homeAway);
+    selectedPlayerId = null;
     activeGameId = currentGame.id;
     await saveJSON(teamKey('active-game-id'), activeGameId);
     updateIndexSummary();
@@ -877,23 +910,46 @@ function attachHandlers(){
     render();
   };
 
-  // Live: on-court toggle
-  document.querySelectorAll('[data-toggle-court]').forEach(btn => {
-    btn.onclick = () => {
-      const pid = btn.dataset.toggleCourt;
-      const idx = currentGame.onCourt.indexOf(pid);
-      if(idx>=0) currentGame.onCourt.splice(idx,1); else currentGame.onCourt.push(pid);
+  // Live: select a player on court (whole tile, excluding the Sub out button)
+  document.querySelectorAll('[data-select-player]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if(e.target.closest('[data-sub-out]')) return;
+      selectedPlayerId = el.dataset.selectPlayer;
+      render();
+    });
+  });
+
+  // Live: sub a player out (frees a court slot)
+  document.querySelectorAll('[data-sub-out]').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const pid = btn.dataset.subOut;
+      currentGame.onCourt = currentGame.onCourt.filter(id => id !== pid);
+      if(selectedPlayerId === pid) selectedPlayerId = null;
       queueSaveGame();
       render();
     };
   });
 
-  // Live: stat buttons
-  document.querySelectorAll('[data-stat]').forEach(btn => {
+  // Live: sub a player in (blocked once 5 are already on court)
+  document.querySelectorAll('[data-sub-in]').forEach(btn => {
     btn.onclick = () => {
-      const [pid, field] = btn.dataset.stat.split(':');
-      const qs = currentGame.stats[pid][currentGame.currentQuarter];
-      switch(field){
+      if(currentGame.onCourt.length >= 5){
+        alert('Court is full — sub a player out first.');
+        return;
+      }
+      currentGame.onCourt.push(btn.dataset.subIn);
+      queueSaveGame();
+      render();
+    };
+  });
+
+  // Live: stat buttons — apply to whichever player is currently selected
+  document.querySelectorAll('[data-field]').forEach(btn => {
+    btn.onclick = () => {
+      if(!selectedPlayerId) return;
+      const qs = currentGame.stats[selectedPlayerId][currentGame.currentQuarter];
+      switch(btn.dataset.field){
         case 'fgm2': qs.fgm2++; qs.fga2++; break;
         case 'fga2miss': qs.fga2++; break;
         case 'fgm3': qs.fgm3++; qs.fga3++; break;
@@ -933,6 +989,7 @@ function attachHandlers(){
     activeGameId = null;
     await saveJSON(teamKey('active-game-id'), null);
     currentGame = null;
+    selectedPlayerId = null;
     setTab('history');
   };
 
@@ -979,12 +1036,21 @@ function updateClockDisplayOnly(){
     const pid = currentGame.onCourt[0];
     disp.textContent = fmtClock(currentGame.stats[pid][q].seconds);
   }
-  document.querySelectorAll('.pc-meta').forEach((el,i) => {
-    const p = roster.players[i]; if(!p) return;
-    const qs = currentGame.stats[p.id][currentGame.currentQuarter];
-    const sec = totalPlayerStat(p.id,'seconds');
-    el.innerHTML = `<span class="pc-pts">${playerPoints(qs)} PTS (${QLABELS[currentGame.currentQuarter]})</span><span>Q time ${fmtClock(qs.seconds)}</span><span>Game time ${fmtClock(sec)}</span>`;
+  // Live game-time label on each on-court tile
+  document.querySelectorAll('.court-slot').forEach(el => {
+    const pid = el.dataset.selectPlayer;
+    const timeEl = el.querySelector('.cs-time');
+    if(pid && timeEl) timeEl.textContent = fmtClock(totalPlayerStat(pid,'seconds'));
   });
+  // Live meta line in the control panel for whoever is selected
+  if(selectedPlayerId && currentGame.stats[selectedPlayerId]){
+    const q = currentGame.currentQuarter;
+    const qs = currentGame.stats[selectedPlayerId][q];
+    const metaEl = document.getElementById('selPlayerMeta');
+    if(metaEl){
+      metaEl.innerHTML = `<span class="pc-pts">${playerPoints(qs)} PTS (${QLABELS[q]})</span><span>Q time ${fmtClock(qs.seconds)}</span><span>Game time ${fmtClock(totalPlayerStat(selectedPlayerId,'seconds'))}</span>`;
+    }
+  }
 }
 
 /* ---------------------------------------------------------------
