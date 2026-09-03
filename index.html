@@ -656,15 +656,28 @@ async function init(){
 
   await loadTeamData();
   if(currentGame) activeTab = 'live';
-  if(urlView === 'season') activeTab = 'season';
-  if(urlGame) activeTab = 'history';
-
   if(!storageAvailable || !dbReachable) document.getElementById('storageBanner').classList.add('show');
+
+  // A shared link is a standalone read-only report: no tabs, no team
+  // switcher, no roster/history chrome — just the requested content.
+  if(urlGame || urlView === 'season'){
+    const topbarEl = document.querySelector('.topbar');
+    const tabsEl = document.getElementById('tabs');
+    if(topbarEl) topbarEl.style.display = 'none';
+    if(tabsEl) tabsEl.style.display = 'none';
+    if(urlGame){
+      await renderSharedGame(urlGame);
+    } else {
+      activeTab = 'season';
+      render();
+    }
+    return;
+  }
+
   bindTabs();
   bindTeamSwitcher();
   renderTeamSelector();
   render();
-  if(urlGame) renderGameDetail(urlGame);
 }
 
 // (Re)loads roster/games/active-game for whichever team is currently selected.
@@ -1005,13 +1018,9 @@ function renderHistory(){
   <div id="gameDetail"></div>`;
 }
 
-async function renderGameDetail(gameId){
-  const g = await loadGame(gameId);
-  const box = document.getElementById('gameDetail');
-  if(!g){
-    if(box) box.innerHTML = `<div class="card"><div class="empty"><span class="ball">🏀</span>That game link doesn't match any saved game for this team.</div></div>`;
-    return;
-  }
+// Builds the sorted box-score rows + bolded team-total rows — shared by the
+// History detail view and the standalone shared-game report.
+function buildBoxScore(g){
   const playerRows = roster.players.map(p => {
     const s = g.stats[p.id]; if(!s) return null;
     const pts = QUARTERS.reduce((sum,q)=>sum+playerPoints(s[q]),0);
@@ -1039,16 +1048,65 @@ async function renderGameDetail(gameId){
     <tr style="font-weight:700;">
       <td>${escapeHtml(g.opponent||'Opponent')} Total</td><td>${oppPts}</td><td>${oppTotals.oreb}</td><td>${oppTotals.dreb}</td><td>${oppTotals.stl}</td><td>${oppTotals.blk}</td><td>${oppTotals.to}</td><td>${oppTotals.fouls}</td><td>—</td><td>—</td>
     </tr>`;
-
+  return { rows, totalsRows };
+}
+// Builds the quarter-by-quarter score table + Home/Away labels — also shared.
+function buildQuarterTable(g){
   const quarterTable = QUARTERS.map(q => {
     const homeQ = Object.values(g.stats).reduce((sum,s)=>sum+playerPoints(s[q]),0);
     const awayQ = playerPoints((g.oppStats && g.oppStats[q]) || emptyQuarterStat());
     return `<tr><td>${QLABELS[q]}</td><td>${homeQ}</td><td>${awayQ}</td></tr>`;
   }).join('');
-
   const prefix = g.homeAway==='away' ? '@' : 'vs';
   const usTag = g.homeAway==='away' ? 'Away' : 'Home';
   const oppTag = g.homeAway==='away' ? 'Home' : 'Away';
+  return { quarterTable, prefix, usTag, oppTag };
+}
+// Standalone read-only report for a shared game link — no nav, no tabs, no
+// edit controls, just the four sections that were asked for.
+async function renderSharedGame(gameId){
+  const g = await loadGame(gameId);
+  const app = document.getElementById('app');
+  if(!g){
+    app.innerHTML = `<div class="card"><div class="empty"><span class="ball">🏀</span>This game link doesn't match any saved game.</div></div>`;
+    return;
+  }
+  const { quarterTable, prefix, usTag, oppTag } = buildQuarterTable(g);
+  const { rows, totalsRows } = buildBoxScore(g);
+  app.innerHTML = `
+  <div class="card">
+    <h2>${escapeHtml(currentTeamName())} ${prefix} ${escapeHtml(g.opponent||'Opponent')} — ${g.date||''}</h2>
+    <div class="section-label">Score by quarter</div>
+    <div class="table-wrap"><table><tr><th>Qtr</th><th>${escapeHtml(currentTeamName())} (${usTag})</th><th>${escapeHtml(g.opponent||'Opp')} (${oppTag})</th></tr>${quarterTable}
+      <tr><th>Total</th><th>${homeScore(g)}</th><th>${awayScore(g)}</th></tr></table></div>
+  </div>
+  <div class="card">
+    <h2>Score progression</h2>
+    ${scoreLineChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
+  </div>
+  <div class="card">
+    <h2>Team comparison</h2>
+    ${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}
+    ${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
+  </div>
+  <div class="card">
+    <h2>Box score — sorted by points</h2>
+    <div class="table-wrap"><table>
+      <tr><th>Player</th><th>PTS</th><th>OREB</th><th>DREB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
+      ${rows}
+      ${totalsRows}
+    </table></div>
+  </div>`;
+}
+async function renderGameDetail(gameId){
+  const g = await loadGame(gameId);
+  const box = document.getElementById('gameDetail');
+  if(!g){
+    if(box) box.innerHTML = `<div class="card"><div class="empty"><span class="ball">🏀</span>That game link doesn't match any saved game for this team.</div></div>`;
+    return;
+  }
+  const { rows, totalsRows } = buildBoxScore(g);
+  const { quarterTable, prefix, usTag, oppTag } = buildQuarterTable(g);
 
   box.innerHTML = `
   <div class="card">
