@@ -193,6 +193,7 @@
   .play-row.editing{flex-direction:column; align-items:stretch; gap:0.5rem;}
   .play-meta{display:flex; align-items:center; gap:0.5rem; font-size:0.8rem; min-width:0;}
   .play-q{font-family:'Space Mono',monospace; font-size:0.7rem; color:var(--wood-light); flex-shrink:0;}
+  .play-time{font-size:0.68rem; color:var(--paper-dim); flex-shrink:0;}
   .play-player{font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .play-action{color:var(--paper-dim); font-size:0.76rem; flex-shrink:0;}
   .play-actions{display:flex; align-items:center; gap:0.3rem; flex-shrink:0;}
@@ -323,6 +324,7 @@ let selectedPlayerId = null; // which on-court player (or 'OPPONENT') the panel 
 let showSubPicker = false; // whether the bench picker is expanded
 let editingPlayId = null; // play-by-play entry currently being edited
 let editingPlayerId = null; // roster player currently being edited inline
+let playLogExpanded = false; // whether the play-by-play list is expanded
 let activeTab = 'roster';
 let clockTimer = null;
 let saveDebounce = null;
@@ -388,7 +390,7 @@ function playLogHtml(game){
       <div class="play-row editing" data-play-id="${play.id}">
         <div class="play-edit-grid">
           <select data-edit-quarter>${qOptions}</select>
-          <select data-edit-player>${playerOptions}</select>
+          <select data-edit-play-player>${playerOptions}</select>
           <select data-edit-field>${fieldOptions}</select>
         </div>
         <div class="play-actions">
@@ -400,6 +402,7 @@ function playLogHtml(game){
     return `
     <div class="play-row">
       <div class="play-meta">
+        <span class="play-time mono">${fmtTimestamp(play.ts)}</span>
         <span class="play-q">${QLABELS[play.quarter]}</span>
         <span class="play-player">${escapeHtml(play.playerName)}</span>
         <span class="play-action">${FIELD_LABELS[play.field]||play.field}</span>
@@ -567,6 +570,10 @@ function scoreLineChartHtml(game, usName, oppName){
   </svg>
   <div class="bar-legend"><span class="legend-dot home"></span>${escapeHtml(usName)} (${lastHome}) &nbsp; <span class="legend-dot away"></span>${escapeHtml(oppName)} (${lastAway})</div>`;
 }
+function fmtTimestamp(ts){
+  if(!ts) return '';
+  return new Date(ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
 function fmtClock(sec){
   const m = Math.floor(sec/60), s = sec%60;
   return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
@@ -659,7 +666,7 @@ async function loadTeamData(){
   gamesIndex = gamesIndexRes;
   activeGameId = activeGameIdRes;
   currentGame = null;
-  selectedPlayerId = null; showSubPicker = false; editingPlayId = null;
+  selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false;
   editingPlayerId = null;
   if(activeGameId){
     currentGame = await loadGame(activeGameId);
@@ -872,6 +879,7 @@ function renderLive(){
   const isOpp = selectedPlayerId === 'OPPONENT';
   const selPlayer = isOpp ? { id:'OPPONENT', name: g.opponent||'Opponent' } : roster.players.find(p => p.id === selectedPlayerId);
   const selQs = isOpp ? (g.oppStats[q] || emptyQuarterStat()) : (selPlayer ? g.stats[selPlayer.id][q] : null);
+  const lastPlayForSel = (g.playLog||[]).slice().reverse().find(p => p.playerId === selectedPlayerId);
 
   const statsPanelHtml = `
   <div class="card">
@@ -889,7 +897,10 @@ function renderLive(){
       </div>
       <div class="live-col-stats">
         ${selPlayer ? `
-        <h2>Recording for ${escapeHtml(selPlayer.name)}</h2>
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
+          <h2 style="margin-bottom:0.3rem;">Recording for ${escapeHtml(selPlayer.name)}</h2>
+          <button class="btn secondary" id="undoLastPlayBtn" ${lastPlayForSel?'':'disabled'} style="padding:0.3rem 0.6rem; font-size:0.72rem; flex-shrink:0;" title="${lastPlayForSel ? 'Undo: '+(FIELD_LABELS[lastPlayForSel.field]||lastPlayForSel.field) : 'No recent play to undo'}">↩ Undo last</button>
+        </div>
         <div class="pc-meta" id="selPlayerMeta" style="margin-bottom:0.7rem;">
           <span class="pc-pts">${playerPoints(selQs)} PTS (${QLABELS[q]})</span>
           ${isOpp ? '' : `<span>Q time ${fmtClock(selQs.seconds)}</span><span>Game time ${fmtClock(totalPlayerStat(selPlayer.id,'seconds'))}</span><span>${totalPlayerStat(selPlayer.id,'plusMinus')>=0?'+':''}${totalPlayerStat(selPlayer.id,'plusMinus')} +/-</span>`}
@@ -948,8 +959,11 @@ function renderLive(){
   </div>
 
   <div class="card">
-    <h2>Play-by-play</h2>
-    ${playLogHtml(g)}
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem;">
+      <h2>Play-by-play (${(g.playLog||[]).length})</h2>
+      <button class="btn secondary" id="togglePlayLogBtn" style="padding:0.35rem 0.7rem; font-size:0.75rem; flex-shrink:0;">${playLogExpanded ? 'Collapse' : 'Expand'}</button>
+    </div>
+    ${playLogExpanded ? playLogHtml(g) : ''}
   </div>
   `;
 }
@@ -1043,10 +1057,14 @@ async function renderGameDetail(gameId){
       ${rows}
       ${totalsRows}
     </table></div>
-    <div class="section-label">Play-by-play</div>
-    ${playLogHtml(g)}
+    <div class="section-label" style="display:flex; align-items:center; justify-content:space-between;">
+      <span>Play-by-play (${(g.playLog||[]).length})</span>
+      <button class="btn secondary" id="togglePlayLogBtn" style="padding:0.25rem 0.6rem; font-size:0.7rem;">${playLogExpanded ? 'Collapse' : 'Expand'}</button>
+    </div>
+    ${playLogExpanded ? playLogHtml(g) : ''}
   </div>`;
 
+  document.getElementById('togglePlayLogBtn').onclick = () => { playLogExpanded = !playLogExpanded; renderGameDetail(g.id); };
   document.getElementById('toggleExcludeBtn').onclick = async () => {
     g.excludeFromSeason = !g.excludeFromSeason;
     const res = await saveJSON(gameKey(g.id), g);
@@ -1073,7 +1091,7 @@ async function renderGameDetail(gameId){
       if(!play){ editingPlayId = null; renderGameDetail(g.id); return; }
       const row = btn.closest('.play-row');
       const newQ = row.querySelector('[data-edit-quarter]').value;
-      const newPlayerId = row.querySelector('[data-edit-player]').value;
+      const newPlayerId = row.querySelector('[data-edit-play-player]').value;
       const newField = row.querySelector('[data-edit-field]').value;
       applyPlayEffect(g, play, -1);
       play.quarter = newQ;
@@ -1114,7 +1132,7 @@ async function renderGameDetail(gameId){
     delete gameCache[g.id];
     if(currentGame?.id === g.id){
       currentGame = null;
-      selectedPlayerId = null; showSubPicker = false; editingPlayId = null;
+      selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false;
       activeGameId = null;
       await saveJSON(teamKey('active-game-id'), null);
     }
@@ -1317,7 +1335,7 @@ function attachHandlers(){
     const quarterMinutes = document.getElementById('quarterMinInput').value;
     const otMinutes = document.getElementById('otMinInput').value;
     currentGame = newGame(opp, date, homeAway, quarterMinutes, otMinutes);
-    selectedPlayerId = null; showSubPicker = false; editingPlayId = null;
+    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false;
     activeGameId = currentGame.id;
     await saveJSON(teamKey('active-game-id'), activeGameId);
     updateIndexSummary();
@@ -1363,6 +1381,10 @@ function attachHandlers(){
   if(subToggleBtn) subToggleBtn.onclick = () => { showSubPicker = !showSubPicker; render(); };
   const closeSubPicker = document.getElementById('closeSubPicker');
   if(closeSubPicker) closeSubPicker.onclick = () => { showSubPicker = false; render(); };
+
+  // Live: play-by-play expand/collapse
+  const togglePlayLogBtn = document.getElementById('togglePlayLogBtn');
+  if(togglePlayLogBtn) togglePlayLogBtn.onclick = () => { playLogExpanded = !playLogExpanded; render(); };
 
   // Live: select a player on court (whole tile, excluding the Sub out button)
   document.querySelectorAll('[data-select-player]').forEach(el => {
@@ -1422,6 +1444,21 @@ function attachHandlers(){
     };
   });
 
+  // Live: quick undo — reverses the most recent play for whoever is selected
+  const undoLastPlayBtn = document.getElementById('undoLastPlayBtn');
+  if(undoLastPlayBtn) undoLastPlayBtn.onclick = () => {
+    const log = currentGame.playLog || [];
+    let idx = -1;
+    for(let i = log.length - 1; i >= 0; i--){
+      if(log[i].playerId === selectedPlayerId){ idx = i; break; }
+    }
+    if(idx === -1) return;
+    applyPlayEffect(currentGame, log[idx], -1);
+    log.splice(idx, 1);
+    queueSaveGame();
+    render();
+  };
+
   // Live: play-by-play edit/delete
   document.querySelectorAll('[data-edit-play]').forEach(btn => {
     btn.onclick = () => { editingPlayId = btn.dataset.editPlay; render(); };
@@ -1436,7 +1473,7 @@ function attachHandlers(){
       if(!play){ editingPlayId = null; render(); return; }
       const row = btn.closest('.play-row');
       const newQ = row.querySelector('[data-edit-quarter]').value;
-      const newPlayerId = row.querySelector('[data-edit-player]').value;
+      const newPlayerId = row.querySelector('[data-edit-play-player]').value;
       const newField = row.querySelector('[data-edit-field]').value;
       applyPlayEffect(currentGame, play, -1); // undo old effect
       play.quarter = newQ;
@@ -1475,7 +1512,7 @@ function attachHandlers(){
     activeGameId = null;
     await saveJSON(teamKey('active-game-id'), null);
     currentGame = null;
-    selectedPlayerId = null; showSubPicker = false; editingPlayId = null;
+    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false;
     setTab('history');
     renderGameDetail(finishedGameId); // jump straight to the final summary, not just the schedule list
   };
