@@ -121,11 +121,11 @@
   .sb-mid .qtag{font-size:0.7rem; color:var(--wood-light); text-transform:uppercase; letter-spacing:0.08em; margin-top:0.15rem;}
   .foul-tracker{display:flex; gap:0.4rem; margin-top:0.35rem; flex-wrap:wrap; justify-content:center;}
   .foul-badge{
-    font-size:0.62rem; font-family:'Space Mono',monospace; color:var(--paper-dim);
-    background:var(--court); border:1px solid var(--court-line); border-radius:999px;
+    font-size:0.62rem; font-family:'Space Mono',monospace; color:var(--make); font-weight:700;
+    background:var(--court); border:1px solid var(--make); border-radius:999px;
     padding:0.15rem 0.5rem; white-space:nowrap;
   }
-  .foul-badge.bonus{color:var(--ink); background:var(--accent); border-color:var(--accent); font-weight:700;}
+  .foul-badge.bonus{color:#fff; background:var(--miss); border-color:var(--miss);}
 
   .quarter-tabs{display:flex; gap:0.4rem; margin-bottom:0.8rem; flex-wrap:wrap;}
   .quarter-tabs button{
@@ -244,13 +244,16 @@
      Targets short-viewport landscape (phones), not tablets/desktop.
   --------------------------------------------------------------- */
   @media (orientation:landscape) and (max-height:500px){
-    body{ overflow:hidden; }
+    body.tab-live{ overflow:hidden; }
+    /* Only free up the full screen while actually on the Live tab — other
+       tabs keep normal nav access since they aren't scroll-snapped. */
+    body.tab-live .topbar, body.tab-live #tabs{ display:none; }
     main{
       max-width:none; padding:0; margin:0;
-      height:100vh; height:100dvh;
       overflow-y:scroll; overflow-x:hidden;
       scroll-snap-type:y mandatory;
     }
+    body.tab-live main{ height:100vh; height:100dvh; }
     .live-screen{
       min-height:100vh; min-height:100dvh;
       scroll-snap-align:start; scroll-snap-stop:always;
@@ -913,6 +916,7 @@ function setTab(tab){
    RENDER ROOT
 --------------------------------------------------------------- */
 function render(){
+  document.body.classList.toggle('tab-live', activeTab === 'live'); // lets landscape CSS free up full-screen space only here
   const app = document.getElementById('app');
   if(activeTab==='roster') app.innerHTML = renderRoster();
   else if(activeTab==='live') app.innerHTML = renderLive();
