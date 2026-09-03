@@ -998,8 +998,11 @@ async function renderSeason(){
     });
   });
 
-  const rows = roster.players.map(p => {
-    const t = totals[p.id]; if(!t) return '';
+  const rows = roster.players
+    .filter(p => totals[p.id]) // guard against stray ids
+    .sort((a,b) => (totals[b.id].pts||0) - (totals[a.id].pts||0)) // descending by season points
+    .map(p => {
+    const t = totals[p.id];
     const gp = t.games.size || 0;
     const ppg = gp ? (t.pts/gp).toFixed(1) : '0.0';
     const fg2pct = t.fga2 ? Math.round(100*t.fgm2/t.fga2) : 0;
