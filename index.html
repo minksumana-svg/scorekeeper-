@@ -402,7 +402,7 @@ function playLogHtml(game){
     return `
     <div class="play-row">
       <div class="play-meta">
-        <span class="play-time mono">${fmtTimestamp(play.ts)}</span>
+        <span class="play-time mono">${play.clockAtPlay!=null ? fmtClock(play.clockAtPlay) : '--:--'}</span>
         <span class="play-q">${QLABELS[play.quarter]}</span>
         <span class="play-player">${escapeHtml(play.playerName)}</span>
         <span class="play-action">${FIELD_LABELS[play.field]||play.field}</span>
@@ -645,14 +645,26 @@ async function init(){
     await saveJSON('active-team-id', activeTeamId);
   }
 
+  // Shared links (?team=...&game=... or ?team=...&view=season) override which
+  // team/tab loads for THIS pageview only — never persisted as your own
+  // preference, so opening someone's shared link doesn't hijack your app.
+  const params = new URLSearchParams(window.location.search);
+  const urlTeam = params.get('team');
+  const urlGame = params.get('game');
+  const urlView = params.get('view');
+  if(urlTeam && teams.find(t => t.id === urlTeam)) activeTeamId = urlTeam;
+
   await loadTeamData();
   if(currentGame) activeTab = 'live';
+  if(urlView === 'season') activeTab = 'season';
+  if(urlGame) activeTab = 'history';
 
   if(!storageAvailable || !dbReachable) document.getElementById('storageBanner').classList.add('show');
   bindTabs();
   bindTeamSwitcher();
   renderTeamSelector();
   render();
+  if(urlGame) renderGameDetail(urlGame);
 }
 
 // (Re)loads roster/games/active-game for whichever team is currently selected.
@@ -734,7 +746,7 @@ function render(){
   if(activeTab==='roster') app.innerHTML = renderRoster();
   else if(activeTab==='live') app.innerHTML = renderLive();
   else if(activeTab==='history') app.innerHTML = renderHistory();
-  else if(activeTab==='season') app.innerHTML = renderSeason();
+  else if(activeTab==='season'){ renderSeason(); return; } // manages its own async content + handler binding
   attachHandlers();
 }
 
@@ -995,8 +1007,11 @@ function renderHistory(){
 
 async function renderGameDetail(gameId){
   const g = await loadGame(gameId);
-  if(!g) return;
   const box = document.getElementById('gameDetail');
+  if(!g){
+    if(box) box.innerHTML = `<div class="card"><div class="empty"><span class="ball">🏀</span>That game link doesn't match any saved game for this team.</div></div>`;
+    return;
+  }
   const playerRows = roster.players.map(p => {
     const s = g.stats[p.id]; if(!s) return null;
     const pts = QUARTERS.reduce((sum,q)=>sum+playerPoints(s[q]),0);
@@ -1039,7 +1054,8 @@ async function renderGameDetail(gameId){
   <div class="card">
     <button class="backlink" id="closeDetail">← Back to schedule</button>
     <h2>${escapeHtml(currentTeamName())} ${prefix} ${escapeHtml(g.opponent||'Opponent')} — ${g.date||''}</h2>
-    <div style="display:flex; gap:0.5rem; margin-bottom:0.9rem;">
+    <div style="display:flex; gap:0.5rem; margin-bottom:0.9rem; flex-wrap:wrap;">
+      <button class="btn secondary" id="shareGameBtn">🔗 Share game</button>
       <button class="btn secondary" id="toggleExcludeBtn">${g.excludeFromSeason ? 'Include in season stats' : 'Exclude from season stats'}</button>
       <button class="btn danger" id="deleteGameBtn">Delete game</button>
     </div>
@@ -1065,6 +1081,10 @@ async function renderGameDetail(gameId){
   </div>`;
 
   document.getElementById('togglePlayLogBtn').onclick = () => { playLogExpanded = !playLogExpanded; renderGameDetail(g.id); };
+  document.getElementById('shareGameBtn').onclick = () => {
+    const url = buildShareUrl({ team: activeTeamId, game: g.id });
+    shareLink(url, `${currentTeamName()} ${prefix} ${g.opponent||'Opponent'} — ${g.date||''}`);
+  };
   document.getElementById('toggleExcludeBtn').onclick = async () => {
     g.excludeFromSeason = !g.excludeFromSeason;
     const res = await saveJSON(gameKey(g.id), g);
@@ -1218,7 +1238,10 @@ async function renderSeason(){
   const excludedCount = gamesIndex.length - allGames.length;
   app.innerHTML = `
   <div class="card">
-    <h2>${escapeHtml(currentTeamName())} — season totals</h2>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
+      <h2>${escapeHtml(currentTeamName())} — season totals</h2>
+      <button class="btn secondary" id="shareSeasonBtn" style="flex-shrink:0;">🔗 Share season</button>
+    </div>
     ${excludedCount > 0 ? `<div class="section-label" style="margin-top:-0.4rem;">${excludedCount} game${excludedCount===1?'':'s'} excluded from these totals</div>` : ''}
     ${allGames.length===0 ? `<div class="empty"><span class="ball">🏀</span>No games recorded yet this season.</div>` : `
     <div class="table-wrap"><table>
@@ -1227,6 +1250,7 @@ async function renderSeason(){
       ${seasonSummaryRows}
     </table></div>`}
   </div>`;
+  attachHandlers(); // real content is in the DOM now — bind Share button etc.
 }
 
 /* ---------------------------------------------------------------
@@ -1236,6 +1260,13 @@ function attachHandlers(){
   // Live tab's inline team picker (mirrors the top-bar selector)
   const liveTeamSel = document.getElementById('liveTeamSelector');
   if(liveTeamSel) liveTeamSel.onchange = (e) => switchTeam(e.target.value);
+
+  // Season: share link
+  const shareSeasonBtn = document.getElementById('shareSeasonBtn');
+  if(shareSeasonBtn) shareSeasonBtn.onclick = () => {
+    const url = buildShareUrl({ team: activeTeamId, view: 'season' });
+    shareLink(url, `${currentTeamName()} — season stats`);
+  };
 
   // Roster
   const saveTeamBtn = document.getElementById('saveTeamName');
@@ -1434,6 +1465,7 @@ function attachHandlers(){
         playerName,
         field: btn.dataset.field,
         onCourtSnapshot: [...currentGame.onCourt],
+        clockAtPlay: currentGame.quarterRemaining[currentGame.currentQuarter], // countdown time remaining when this happened
         ts: Date.now()
       };
       applyPlayEffect(currentGame, play, 1);
@@ -1586,6 +1618,26 @@ function updateClockDisplayOnly(){
 /* ---------------------------------------------------------------
    UTIL
 --------------------------------------------------------------- */
+/* ---------------------------------------------------------------
+   SHARE LINKS
+--------------------------------------------------------------- */
+function buildShareUrl(extraParams){
+  const url = new URL(window.location.href);
+  url.search = '';
+  Object.entries(extraParams).forEach(([k,v]) => url.searchParams.set(k, v));
+  return url.toString();
+}
+async function shareLink(url, title){
+  if(navigator.share){
+    try{ await navigator.share({ title, url }); return; }catch(e){ /* cancelled or unsupported — fall through to clipboard */ }
+  }
+  try{
+    await navigator.clipboard.writeText(url);
+    alert('Link copied to clipboard:\n' + url);
+  }catch(e){
+    prompt('Copy this link:', url);
+  }
+}
 function escapeHtml(str){ return (str??'').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(str){ return escapeHtml(str); }
 
