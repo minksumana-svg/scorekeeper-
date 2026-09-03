@@ -253,40 +253,56 @@
       overflow-y:scroll; overflow-x:hidden;
       scroll-snap-type:y mandatory;
     }
-    body.tab-live main{ height:100vh; height:100dvh; }
+    /* Driven by the JS-measured real viewport height (--app-vh), not raw
+       vh/dvh units — those are unreliable across mobile browsers because of
+       address-bar height differences. Falls back to dvh then vh if JS
+       hasn't run yet. */
+    body.tab-live main{ height:var(--app-vh, 100dvh); height:var(--app-vh, 100vh); }
     .live-screen{
-      min-height:100vh; min-height:100dvh;
+      min-height:var(--app-vh, 100dvh); min-height:var(--app-vh, 100vh);
       scroll-snap-align:start; scroll-snap-stop:always;
-      padding:0.4rem 0.6rem; box-sizing:border-box;
-      display:flex; flex-direction:column; justify-content:center;
-      overflow:hidden;
+      padding:0.3rem 0.5rem; box-sizing:border-box;
+      display:flex; flex-direction:column; justify-content:flex-start;
+      overflow-y:auto; /* safety net: a tiny scroll beats invisible clipped content on an edge-case device */
     }
-    .live-screen-comparison, .live-screen-playlog{ justify-content:flex-start; overflow-y:auto; }
     .team-picker-card{ display:none; } /* switching teams isn't a mid-recording action */
-    .card{ padding:0.5rem 0.6rem; margin-bottom:0.4rem; }
-    h2{ font-size:0.85rem; }
-    .scoreboard{ padding:0.5rem; margin-bottom:0.4rem; }
-    .sb-team .score{ font-size:1.5rem; }
-    .sb-team .label{ font-size:0.62rem; }
-    .clock{ font-size:1.1rem; }
-    .quarter-tabs{ margin-bottom:0.4rem; }
-    .quarter-tabs button{ padding:0.3rem 0.15rem; font-size:0.72rem; }
-    .clock-controls{ margin-bottom:0; }
-    .live-panel-grid{ gap:0 0.8rem; }
-    .court-slot{ padding:0.35rem 0.5rem; }
-    .cs-info{ font-size:0.78rem; }
-    .stat-grid{ gap:0.25rem; }
-    .stat-btn{ padding:0.3rem 0.15rem; font-size:0.6rem; }
-    .stat-btn .n{ font-size:0.68rem; }
-    .pc-meta{ font-size:0.68rem; gap:0.4rem; margin-bottom:0.4rem !important; }
-    .foul-badge{ font-size:0.58rem; }
+    .card{ padding:0.4rem 0.55rem; margin-bottom:0.3rem; }
+    h2{ font-size:0.8rem; margin-bottom:0.2rem; }
+    .scoreboard{ padding:0.4rem; margin-bottom:0.3rem; }
+    .sb-team .score{ font-size:1.3rem; }
+    .sb-team .label{ font-size:0.58rem; }
+    .clock{ font-size:1rem; }
+    .sb-mid .qtag{ margin-top:0.05rem; }
+    .foul-tracker{ margin-top:0.2rem; }
+    .foul-badge{ font-size:0.55rem; padding:0.1rem 0.4rem; }
+    .quarter-tabs{ margin-bottom:0.3rem; gap:0.25rem; }
+    .quarter-tabs button{ padding:0.22rem 0.1rem; font-size:0.68rem; }
+    .clock-controls{ margin-bottom:0; gap:0.35rem; }
+    .clock-controls .btn{ padding:0.4rem 0.6rem; font-size:0.78rem; }
+    .live-panel-grid{ gap:0 0.7rem; }
+    .live-col-court h2, .live-col-stats h2{ margin-bottom:0.2rem; }
+    #subToggleBtn{ padding:0.25rem 0.5rem; font-size:0.68rem; }
+    .court-grid{ gap:0.25rem; margin-bottom:0.3rem; }
+    .court-slot{ padding:0.25rem 0.4rem; gap:0.35rem; }
+    .cs-info{ font-size:0.72rem; }
+    .cs-time{ font-size:0.65rem; }
+    .court-slot .btn{ padding:0.2rem 0.4rem; font-size:0.62rem; }
+    .pc-meta{ font-size:0.62rem; gap:0.35rem; margin-bottom:0.3rem !important; flex-wrap:wrap; }
+    #undoLastPlayBtn{ padding:0.2rem 0.4rem !important; font-size:0.6rem !important; }
+    .stat-grid{ grid-template-columns:repeat(4,1fr) !important; gap:0.2rem; }
+    .stat-btn{ padding:0.25rem 0.1rem; font-size:0.56rem; }
+    .stat-btn .n{ font-size:0.64rem; }
 
     /* Comparison screen: chart next to the table instead of stacked */
     .live-comparison-flex{
-      display:flex; gap:1rem; align-items:flex-start; flex:1; min-height:0; overflow-y:auto;
+      display:flex; gap:1rem; align-items:flex-start; flex:1; min-height:0;
     }
     .live-comparison-flex > div{ flex:1; min-width:0; }
-    .live-comparison-flex table{ font-size:0.72rem; }
+    .live-comparison-flex table{ font-size:0.68rem; }
+    .live-comparison-flex th, .live-comparison-flex td{ padding:0.25rem 0.2rem; }
+    .live-screen-comparison .bar-chart{ gap:0.35rem; }
+    .live-screen-comparison .bar-cat{ font-size:0.6rem; margin-bottom:0.1rem; }
+    .live-screen-comparison .bar-track{ height:0.65rem; }
   }
 </style>
 </head>
@@ -1881,6 +1897,17 @@ async function shareLink(url, title){
 }
 function escapeHtml(str){ return (str??'').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(str){ return escapeHtml(str); }
+
+// Mobile browsers report vh/dvh inconsistently (address bar height varies by
+// browser and changes as it hides/shows), so the landscape Live layout is
+// driven off this measured value instead — it always matches the real
+// visible viewport on whatever device this happens to be.
+function setAppViewportHeight(){
+  document.documentElement.style.setProperty('--app-vh', window.innerHeight + 'px');
+}
+setAppViewportHeight();
+window.addEventListener('resize', setAppViewportHeight);
+window.addEventListener('orientationchange', () => setTimeout(setAppViewportHeight, 150));
 
 init();
 </script>
