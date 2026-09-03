@@ -1241,6 +1241,12 @@ function buildBoxScore(g){
   const playerRows = roster.players.map(p => {
     const s = g.stats[p.id]; if(!s) return null;
     const pts = QUARTERS.reduce((sum,q)=>sum+playerPoints(s[q]),0);
+    const fgm2 = QUARTERS.reduce((sum,q)=>sum+s[q].fgm2,0);
+    const fga2 = QUARTERS.reduce((sum,q)=>sum+s[q].fga2,0);
+    const fgm3 = QUARTERS.reduce((sum,q)=>sum+s[q].fgm3,0);
+    const fga3 = QUARTERS.reduce((sum,q)=>sum+s[q].fga3,0);
+    const ftm = QUARTERS.reduce((sum,q)=>sum+s[q].ftm,0);
+    const fta = QUARTERS.reduce((sum,q)=>sum+s[q].fta,0);
     const oreb = QUARTERS.reduce((sum,q)=>sum+s[q].oreb,0);
     const dreb = QUARTERS.reduce((sum,q)=>sum+s[q].dreb,0);
     const stl = QUARTERS.reduce((sum,q)=>sum+(s[q].stl||0),0);
@@ -1249,21 +1255,24 @@ function buildBoxScore(g){
     const fouls = QUARTERS.reduce((sum,q)=>sum+s[q].fouls,0);
     const sec = QUARTERS.reduce((sum,q)=>sum+s[q].seconds,0);
     const plusMinus = QUARTERS.reduce((sum,q)=>sum+(s[q].plusMinus||0),0);
-    return { name:p.name, pts, oreb, dreb, stl, blk, to, fouls, sec, plusMinus };
+    const fgm = fgm2+fgm3, fga = fga2+fga3;
+    return { name:p.name, pts, fgm, fga, fgm2, fga2, fgm3, fga3, ftm, fta, oreb, dreb, stl, blk, to, fouls, sec, plusMinus };
   }).filter(Boolean).sort((a,b) => b.pts - a.pts); // descending by points
 
-  const rows = playerRows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.oreb}</td><td>${r.dreb}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td></tr>`).join('');
+  const rows = playerRows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.fgm}/${r.fga}</td><td>${pct(r.fgm2,r.fga2)}%</td><td>${pct(r.fgm3,r.fga3)}%</td><td>${pct(r.ftm,r.fta)}%</td><td>${r.oreb}</td><td>${r.dreb}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td></tr>`).join('');
 
   const teamTotals = aggregateTeamStats(g, true);
   const oppTotals = aggregateTeamStats(g, false);
   const teamPts = teamTotals.fgm2*2 + teamTotals.fgm3*3 + teamTotals.ftm;
   const oppPts = oppTotals.fgm2*2 + oppTotals.fgm3*3 + oppTotals.ftm;
+  const teamFgm = teamTotals.fgm2+teamTotals.fgm3, teamFga = teamTotals.fga2+teamTotals.fga3;
+  const oppFgm = oppTotals.fgm2+oppTotals.fgm3, oppFga = oppTotals.fga2+oppTotals.fga3;
   const totalsRows = `
     <tr style="font-weight:700; border-top:2px solid var(--wood);">
-      <td>${escapeHtml(currentTeamName())} Total</td><td>${teamPts}</td><td>${teamTotals.oreb}</td><td>${teamTotals.dreb}</td><td>${teamTotals.stl}</td><td>${teamTotals.blk}</td><td>${teamTotals.to}</td><td>${teamTotals.fouls}</td><td>—</td><td>—</td>
+      <td>${escapeHtml(currentTeamName())} Total</td><td>${teamPts}</td><td>${teamFgm}/${teamFga}</td><td>${pct(teamTotals.fgm2,teamTotals.fga2)}%</td><td>${pct(teamTotals.fgm3,teamTotals.fga3)}%</td><td>${pct(teamTotals.ftm,teamTotals.fta)}%</td><td>${teamTotals.oreb}</td><td>${teamTotals.dreb}</td><td>${teamTotals.stl}</td><td>${teamTotals.blk}</td><td>${teamTotals.to}</td><td>${teamTotals.fouls}</td><td>—</td><td>—</td>
     </tr>
     <tr style="font-weight:700;">
-      <td>${escapeHtml(g.opponent||'Opponent')} Total</td><td>${oppPts}</td><td>${oppTotals.oreb}</td><td>${oppTotals.dreb}</td><td>${oppTotals.stl}</td><td>${oppTotals.blk}</td><td>${oppTotals.to}</td><td>${oppTotals.fouls}</td><td>—</td><td>—</td>
+      <td>${escapeHtml(g.opponent||'Opponent')} Total</td><td>${oppPts}</td><td>${oppFgm}/${oppFga}</td><td>${pct(oppTotals.fgm2,oppTotals.fga2)}%</td><td>${pct(oppTotals.fgm3,oppTotals.fga3)}%</td><td>${pct(oppTotals.ftm,oppTotals.fta)}%</td><td>${oppTotals.oreb}</td><td>${oppTotals.dreb}</td><td>${oppTotals.stl}</td><td>${oppTotals.blk}</td><td>${oppTotals.to}</td><td>${oppTotals.fouls}</td><td>—</td><td>—</td>
     </tr>`;
   return { rows, totalsRows };
 }
@@ -1309,7 +1318,7 @@ async function renderSharedGame(gameId){
   <div class="card">
     <h2>Box score — sorted by points</h2>
     <div class="table-wrap"><table>
-      <tr><th>Player</th><th>PTS</th><th>OREB</th><th>DREB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
+      <tr><th>Player</th><th>PTS</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
       ${rows}
       ${totalsRows}
     </table></div>
@@ -1344,7 +1353,7 @@ async function renderGameDetail(gameId){
     ${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
     <div class="section-label">Box score — sorted by points</div>
     <div class="table-wrap"><table>
-      <tr><th>Player</th><th>PTS</th><th>OREB</th><th>DREB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
+      <tr><th>Player</th><th>PTS</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
       ${rows}
       ${totalsRows}
     </table></div>
