@@ -227,6 +227,7 @@
     padding:0.7rem 0.9rem; font-size:0.82rem; line-height:1.4; display:none;
   }
   .storage-banner.show{display:block;}
+  .storage-banner.info{background:#2e2118; border-color:var(--wood);}
 </style>
 </head>
 <body>
@@ -261,7 +262,9 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getFirestore, doc, getDoc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* ---------------------------------------------------------------
-   STORAGE HELPERS — backed by Firestore
+   STORAGE HELPERS — Firestore as the source of truth, with a
+   localStorage cache so the app keeps working with zero connectivity
+   and syncs automatically once a connection is available again.
 --------------------------------------------------------------- */
 const firebaseConfig = {
   apiKey: "AIzaSyAfZZBIPQWFFgKN9T1L8r_JaAnC87KyBqM",
@@ -278,34 +281,125 @@ const STORAGE_COLLECTION = 'storage'; // one doc per key, mirrors the old get/se
 
 const storageAvailable = true;
 
+const LS_PREFIX = 'sk_cache_';
+const LS_DIRTY_KEY = 'sk_dirty_keys';
+
+function lsGet(key){
+  try{ return localStorage.getItem(LS_PREFIX + key); }catch(e){ return null; }
+}
+function lsSet(key, valueStr){
+  try{ localStorage.setItem(LS_PREFIX + key, valueStr); return true; }catch(e){ console.error('localStorage set failed', e); return false; }
+}
+function getDirtyKeys(){
+  try{ return JSON.parse(localStorage.getItem(LS_DIRTY_KEY) || '[]'); }catch(e){ return []; }
+}
+function markDirty(key){
+  const dirty = new Set(getDirtyKeys());
+  dirty.add(key);
+  try{ localStorage.setItem(LS_DIRTY_KEY, JSON.stringify([...dirty])); }catch(e){}
+}
+function clearDirty(key){
+  const dirty = new Set(getDirtyKeys());
+  dirty.delete(key);
+  try{ localStorage.setItem(LS_DIRTY_KEY, JSON.stringify([...dirty])); }catch(e){}
+}
+
 async function loadJSON(key, fallback){
+  const cachedRaw = lsGet(key);
+  let cachedValue = fallback;
+  if(cachedRaw !== null){
+    try{ cachedValue = JSON.parse(cachedRaw); }catch(e){ cachedValue = fallback; }
+  }
+  if(!navigator.onLine) return cachedValue; // don't even try — go straight to what's on this device
   try{
     const snap = await getDoc(doc(db, STORAGE_COLLECTION, key));
     if(snap.exists()){
       const data = snap.data();
+      lsSet(key, data.value); // refresh local cache with the authoritative cloud copy
       try{ return JSON.parse(data.value); }catch(e){ return data.value; }
     }
-    return fallback;
+    return cachedValue; // no cloud doc yet (or it was deleted) — use whatever's cached, else fallback
   }catch(e){
-    console.error('load failed', key, e);
-    return fallback;
+    console.error('cloud load failed, using local cache instead', key, e);
+    return cachedValue;
   }
 }
-// Returns {ok:boolean, error?:string}
+// Returns {ok, synced, error?}. ok=false only if BOTH local and cloud saves failed.
+// synced=false means it's safely saved on this device but hasn't reached the cloud yet.
 async function saveJSON(key, value){
+  const valueStr = JSON.stringify(value);
+  const localOk = lsSet(key, valueStr);
+  if(!localOk){
+    // Local storage itself is unavailable/full — try the cloud directly as a last resort.
+    if(navigator.onLine){
+      try{
+        await setDoc(doc(db, STORAGE_COLLECTION, key), { value: valueStr, updatedAt: Date.now() });
+        return { ok:true, synced:true };
+      }catch(e){
+        return { ok:false, error: 'Could not save locally or to the cloud: ' + ((e&&e.message)||String(e)) };
+      }
+    }
+    return { ok:false, error: 'Could not save on this device (storage full or blocked), and you appear offline.' };
+  }
+  markDirty(key);
+  if(!navigator.onLine){
+    updateConnectivityBanner();
+    return { ok:true, synced:false };
+  }
   try{
-    await setDoc(doc(db, STORAGE_COLLECTION, key), { value: JSON.stringify(value), updatedAt: Date.now() });
-    return { ok:true };
+    await setDoc(doc(db, STORAGE_COLLECTION, key), { value: valueStr, updatedAt: Date.now() });
+    clearDirty(key);
+    updateConnectivityBanner();
+    return { ok:true, synced:true };
   }catch(e){
-    console.error('save failed', key, e);
-    return { ok:false, error: (e && e.message) ? e.message : String(e) };
+    console.error('cloud save failed, kept safe locally for later sync', key, e);
+    updateConnectivityBanner();
+    return { ok:true, synced:false, error: (e && e.message) ? e.message : String(e) };
   }
 }
+// Retries every unsynced key. Called on reconnect and on a periodic timer.
+async function syncPendingWrites(){
+  if(!navigator.onLine) { updateConnectivityBanner(); return; }
+  const dirty = getDirtyKeys();
+  for(const key of dirty){
+    const raw = lsGet(key);
+    if(raw === null){ clearDirty(key); continue; }
+    try{
+      await setDoc(doc(db, STORAGE_COLLECTION, key), { value: raw, updatedAt: Date.now() });
+      clearDirty(key);
+    }catch(e){
+      console.error('background sync failed for', key, e); // will retry next pass
+    }
+  }
+  updateConnectivityBanner();
+}
+function updateConnectivityBanner(){
+  const banner = document.getElementById('storageBanner');
+  if(!banner) return;
+  const dirty = getDirtyKeys();
+  if(!navigator.onLine){
+    banner.textContent = '📴 Offline — changes are saving on this device and will sync automatically once you\'re back online.' + (dirty.length ? ` (${dirty.length} change${dirty.length===1?'':'s'} waiting)` : '');
+    banner.classList.add('show','info');
+  } else if(dirty.length > 0){
+    banner.textContent = `🔄 Syncing ${dirty.length} change${dirty.length===1?'':'s'} to the cloud…`;
+    banner.classList.add('show','info');
+  } else {
+    banner.classList.remove('show','info');
+  }
+}
+window.addEventListener('online', () => { updateConnectivityBanner(); syncPendingWrites(); });
+window.addEventListener('offline', () => { updateConnectivityBanner(); });
+setInterval(syncPendingWrites, 15000); // safety-net retry in case a 'wifi with no internet' state never fires 'online'
+
 function flashStatus(elId, res){
   const el = document.getElementById(elId);
   if(!el) return;
   const ok = res === true || res?.ok;
-  el.textContent = ok ? '✓ Saved' : '⚠ ' + (res?.error ? res.error : 'Save failed — try again');
+  let text;
+  if(!ok) text = '⚠ ' + (res?.error ? res.error : 'Save failed — try again');
+  else if(res?.synced === false) text = '✓ Saved offline — will sync';
+  else text = '✓ Saved';
+  el.textContent = text;
   el.className = 'save-status ' + (ok ? 'ok' : 'err');
   clearTimeout(el._t);
   el._t = setTimeout(() => { el.textContent=''; }, 4000);
@@ -325,6 +419,7 @@ let showSubPicker = false; // whether the bench picker is expanded
 let editingPlayId = null; // play-by-play entry currently being edited
 let editingPlayerId = null; // roster player currently being edited inline
 let playLogExpanded = false; // whether the play-by-play list is expanded
+let lastSaveIssue = null; // null | 'offline' | 'error' — drives the live-game save banner across re-renders
 let activeTab = 'roster';
 let clockTimer = null;
 let saveDebounce = null;
@@ -592,9 +687,22 @@ async function flushGame(){
   if(!currentGame) return;
   const res = await saveJSON(gameKey(currentGame.id), currentGame);
   gameCache[currentGame.id] = currentGame;
+  lastSaveIssue = !res.ok ? 'error' : (res.synced === false ? 'offline' : null);
   const banner = document.getElementById('liveSaveWarning');
-  if(banner) banner.classList.toggle('show', !res.ok);
+  if(banner) applyLiveSaveBanner(banner);
   return res;
+}
+function applyLiveSaveBanner(banner){
+  if(lastSaveIssue === 'error'){
+    banner.textContent = "⚠️ Could not save this update anywhere — check your device storage. Keep playing, but write the score down as backup.";
+    banner.classList.remove('info');
+    banner.classList.add('show');
+  } else if(lastSaveIssue === 'offline'){
+    banner.textContent = "📴 Offline — this is saved safely on your device and will sync automatically once you're back online.";
+    banner.classList.add('show','info');
+  } else {
+    banner.classList.remove('show','info');
+  }
 }
 async function persistGamesIndex(){
   await saveJSON(teamKey('games-index'), gamesIndex);
@@ -622,14 +730,6 @@ function updateIndexSummary(){ updateIndexSummaryFor(currentGame); }
    INIT
 --------------------------------------------------------------- */
 async function init(){
-  let dbReachable = true;
-  try{
-    await getDoc(doc(db, STORAGE_COLLECTION, 'teams')); // connectivity probe
-  }catch(e){
-    dbReachable = false;
-    console.error('database unreachable at startup', e);
-  }
-
   teams = await loadJSON('teams', []);
   activeTeamId = await loadJSON('active-team-id', null);
 
@@ -656,7 +756,8 @@ async function init(){
 
   await loadTeamData();
   if(currentGame) activeTab = 'live';
-  if(!storageAvailable || !dbReachable) document.getElementById('storageBanner').classList.add('show');
+  updateConnectivityBanner();
+  syncPendingWrites(); // catch up on anything left unsynced from a previous offline session
 
   // A shared link is a standalone read-only report: no tabs, no team
   // switcher, no roster/history chrome — just the requested content.
@@ -691,7 +792,7 @@ async function loadTeamData(){
   gamesIndex = gamesIndexRes;
   activeGameId = activeGameIdRes;
   currentGame = null;
-  selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false;
+  selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null;
   editingPlayerId = null;
   if(activeGameId){
     currentGame = await loadGame(activeGameId);
@@ -949,7 +1050,10 @@ function renderLive(){
   </div>`;
 
   return teamPicker + `
-  <div class="storage-banner" id="liveSaveWarning">⚠️ The last stat update didn't save — check your connection. Keep playing; I'll keep retrying, but write down the score as backup.</div>
+  <div class="storage-banner ${lastSaveIssue ? 'show' : ''} ${lastSaveIssue==='offline' ? 'info' : ''}" id="liveSaveWarning">${
+    lastSaveIssue === 'error' ? "⚠️ Could not save this update anywhere — check your device storage. Keep playing, but write the score down as backup." :
+    lastSaveIssue === 'offline' ? "📴 Offline — this is saved safely on your device and will sync automatically once you're back online." : ''
+  }</div>
   <div class="scoreboard">
     <div class="sb-team"><div class="sb-tag">${g.homeAway==='away'?'AWAY':'HOME'}</div><div class="label">${escapeHtml(currentTeamName())}</div><div class="score mono">${hs}</div></div>
     <div class="sb-mid">
@@ -1210,7 +1314,7 @@ async function renderGameDetail(gameId){
     delete gameCache[g.id];
     if(currentGame?.id === g.id){
       currentGame = null;
-      selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false;
+      selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null;
       activeGameId = null;
       await saveJSON(teamKey('active-game-id'), null);
     }
@@ -1424,7 +1528,7 @@ function attachHandlers(){
     const quarterMinutes = document.getElementById('quarterMinInput').value;
     const otMinutes = document.getElementById('otMinInput').value;
     currentGame = newGame(opp, date, homeAway, quarterMinutes, otMinutes);
-    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false;
+    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null;
     activeGameId = currentGame.id;
     await saveJSON(teamKey('active-game-id'), activeGameId);
     updateIndexSummary();
@@ -1602,7 +1706,7 @@ function attachHandlers(){
     activeGameId = null;
     await saveJSON(teamKey('active-game-id'), null);
     currentGame = null;
-    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false;
+    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null;
     setTab('history');
     renderGameDetail(finishedGameId); // jump straight to the final summary, not just the schedule list
   };
