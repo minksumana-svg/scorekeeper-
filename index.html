@@ -119,6 +119,13 @@
   .sb-mid{text-align:center;}
   .sb-mid .clock{font-family:'Space Mono',monospace; font-size:1.4rem; color:var(--paper);}
   .sb-mid .qtag{font-size:0.7rem; color:var(--wood-light); text-transform:uppercase; letter-spacing:0.08em; margin-top:0.15rem;}
+  .foul-tracker{display:flex; gap:0.4rem; margin-top:0.35rem; flex-wrap:wrap; justify-content:center;}
+  .foul-badge{
+    font-size:0.62rem; font-family:'Space Mono',monospace; color:var(--paper-dim);
+    background:var(--court); border:1px solid var(--court-line); border-radius:999px;
+    padding:0.15rem 0.5rem; white-space:nowrap;
+  }
+  .foul-badge.bonus{color:var(--ink); background:var(--accent); border-color:var(--accent); font-weight:700;}
 
   .quarter-tabs{display:flex; gap:0.4rem; margin-bottom:0.8rem; flex-wrap:wrap;}
   .quarter-tabs button{
@@ -228,6 +235,56 @@
   }
   .storage-banner.show{display:block;}
   .storage-banner.info{background:#2e2118; border-color:var(--wood);}
+
+  /* ---------------------------------------------------------------
+     PHONE LANDSCAPE — Live Game becomes a set of full-screen,
+     scroll-snapped sections so the main controls need no scrolling
+     to use, and each other section (progression/comparison/play-by-
+     play) is a deliberate swipe away rather than mixed together.
+     Targets short-viewport landscape (phones), not tablets/desktop.
+  --------------------------------------------------------------- */
+  @media (orientation:landscape) and (max-height:500px){
+    body{ overflow:hidden; }
+    main{
+      max-width:none; padding:0; margin:0;
+      height:100vh; height:100dvh;
+      overflow-y:scroll; overflow-x:hidden;
+      scroll-snap-type:y mandatory;
+    }
+    .live-screen{
+      min-height:100vh; min-height:100dvh;
+      scroll-snap-align:start; scroll-snap-stop:always;
+      padding:0.4rem 0.6rem; box-sizing:border-box;
+      display:flex; flex-direction:column; justify-content:center;
+      overflow:hidden;
+    }
+    .live-screen-comparison, .live-screen-playlog{ justify-content:flex-start; overflow-y:auto; }
+    .team-picker-card{ display:none; } /* switching teams isn't a mid-recording action */
+    .card{ padding:0.5rem 0.6rem; margin-bottom:0.4rem; }
+    h2{ font-size:0.85rem; }
+    .scoreboard{ padding:0.5rem; margin-bottom:0.4rem; }
+    .sb-team .score{ font-size:1.5rem; }
+    .sb-team .label{ font-size:0.62rem; }
+    .clock{ font-size:1.1rem; }
+    .quarter-tabs{ margin-bottom:0.4rem; }
+    .quarter-tabs button{ padding:0.3rem 0.15rem; font-size:0.72rem; }
+    .clock-controls{ margin-bottom:0; }
+    .live-panel-grid{ gap:0 0.8rem; }
+    .court-slot{ padding:0.35rem 0.5rem; }
+    .cs-info{ font-size:0.78rem; }
+    .stat-grid{ gap:0.25rem; }
+    .stat-btn{ padding:0.3rem 0.15rem; font-size:0.6rem; }
+    .stat-btn .n{ font-size:0.68rem; }
+    .pc-meta{ font-size:0.68rem; gap:0.4rem; margin-bottom:0.4rem !important; }
+    .foul-badge{ font-size:0.58rem; }
+
+    /* Comparison screen: chart next to the table instead of stacked */
+    .live-comparison-flex{
+      display:flex; gap:1rem; align-items:flex-start; flex:1; min-height:0; overflow-y:auto;
+    }
+    .live-comparison-flex > div{ flex:1; min-width:0; }
+    .live-comparison-flex table{ font-size:0.72rem; }
+  }
 </style>
 </head>
 <body>
@@ -922,7 +979,7 @@ function renderRoster(){
 --------------------------------------------------------------- */
 function renderLive(){
   const teamPicker = `
-  <div class="card" style="padding:0.75rem 1rem;">
+  <div class="card team-picker-card" style="padding:0.75rem 1rem;">
     <label style="margin-bottom:0.3rem;">Team</label>
     <select id="liveTeamSelector">
       ${teams.map(t => `<option value="${escapeAttr(t.id)}" ${t.id===activeTeamId?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}
@@ -965,6 +1022,10 @@ function renderLive(){
   const quarterOver = remaining <= 0;
 
   const quarterTabs = QUARTERS.map(qk => `<button data-quarter="${qk}" class="${qk===q?'active':''}">${QLABELS[qk]}</button>`).join('');
+
+  // Team fouls for the CURRENT quarter — separate from individual player foul totals.
+  const teamFoulsThisQ = Object.values(g.stats).reduce((sum,s) => sum + (s[q].fouls||0), 0);
+  const oppFoulsThisQ = (g.oppStats[q] && g.oppStats[q].fouls) || 0;
 
   // Selection bookkeeping: only an on-court player (or the opponent) can be selected for stat entry.
   if(selectedPlayerId && selectedPlayerId !== 'OPPONENT' && !g.onCourt.includes(selectedPlayerId)) selectedPlayerId = null;
@@ -1050,49 +1111,63 @@ function renderLive(){
   </div>`;
 
   return teamPicker + `
-  <div class="storage-banner ${lastSaveIssue ? 'show' : ''} ${lastSaveIssue==='offline' ? 'info' : ''}" id="liveSaveWarning">${
-    lastSaveIssue === 'error' ? "⚠️ Could not save this update anywhere — check your device storage. Keep playing, but write the score down as backup." :
-    lastSaveIssue === 'offline' ? "📴 Offline — this is saved safely on your device and will sync automatically once you're back online." : ''
-  }</div>
-  <div class="scoreboard">
-    <div class="sb-team"><div class="sb-tag">${g.homeAway==='away'?'AWAY':'HOME'}</div><div class="label">${escapeHtml(currentTeamName())}</div><div class="score mono">${hs}</div></div>
-    <div class="sb-mid">
-      <div class="clock mono" id="clockDisplay">${fmtClock(remaining)}</div>
-      <button class="clock-edit-btn" id="editClockBtn" title="Edit clock" aria-label="Edit clock">✏️ edit</button>
-      <div class="qtag">${quarterOver ? `END OF ${QLABELS[q]}` : QLABELS[q]}${g.clockRunning?' · LIVE':''}</div>
+  <div class="live-screen live-screen-main">
+    <div class="storage-banner ${lastSaveIssue ? 'show' : ''} ${lastSaveIssue==='offline' ? 'info' : ''}" id="liveSaveWarning">${
+      lastSaveIssue === 'error' ? "⚠️ Could not save this update anywhere — check your device storage. Keep playing, but write the score down as backup." :
+      lastSaveIssue === 'offline' ? "📴 Offline — this is saved safely on your device and will sync automatically once you're back online." : ''
+    }</div>
+    <div class="scoreboard">
+      <div class="sb-team"><div class="sb-tag">${g.homeAway==='away'?'AWAY':'HOME'}</div><div class="label">${escapeHtml(currentTeamName())}</div><div class="score mono">${hs}</div></div>
+      <div class="sb-mid">
+        <div class="clock mono" id="clockDisplay">${fmtClock(remaining)}</div>
+        <button class="clock-edit-btn" id="editClockBtn" title="Edit clock" aria-label="Edit clock">✏️ edit</button>
+        <div class="qtag">${quarterOver ? `END OF ${QLABELS[q]}` : QLABELS[q]}${g.clockRunning?' · LIVE':''}</div>
+        <div class="foul-tracker">
+          <span class="foul-badge ${teamFoulsThisQ>=5?'bonus':''}">${escapeHtml(currentTeamName())} ${teamFoulsThisQ} fls${teamFoulsThisQ>=5?' · BONUS':''}</span>
+          <span class="foul-badge ${oppFoulsThisQ>=5?'bonus':''}">${escapeHtml(g.opponent||'Opp')} ${oppFoulsThisQ} fls${oppFoulsThisQ>=5?' · BONUS':''}</span>
+        </div>
+      </div>
+      <div class="sb-team"><div class="sb-tag">${g.homeAway==='away'?'HOME':'AWAY'}</div><div class="label">${escapeHtml(g.opponent||'Opponent')}</div><div class="score mono">${as}</div></div>
     </div>
-    <div class="sb-team"><div class="sb-tag">${g.homeAway==='away'?'HOME':'AWAY'}</div><div class="label">${escapeHtml(g.opponent||'Opponent')}</div><div class="score mono">${as}</div></div>
+
+    <div class="card">
+      <div class="quarter-tabs">${quarterTabs}</div>
+      <div class="clock-controls">
+        ${quarterOver
+          ? `<button class="btn secondary" disabled>End of ${QLABELS[q]} — ${fmtClock(0)}</button>`
+          : `<button class="btn ${g.clockRunning?'secondary':''}" id="clockToggle">${g.clockRunning?'⏸ Pause clock':'▶ Start clock'}</button>`}
+        <button class="btn secondary" id="endGameBtn">End game</button>
+      </div>
+    </div>
+
+    ${statsPanelHtml}
   </div>
 
-  <div class="card">
-    <div class="quarter-tabs">${quarterTabs}</div>
-    <div class="clock-controls">
-      ${quarterOver
-        ? `<button class="btn secondary" disabled>End of ${QLABELS[q]} — ${fmtClock(0)}</button>`
-        : `<button class="btn ${g.clockRunning?'secondary':''}" id="clockToggle">${g.clockRunning?'⏸ Pause clock':'▶ Start clock'}</button>`}
-      <button class="btn secondary" id="endGameBtn">End game</button>
+  <div class="live-screen live-screen-progression">
+    <div class="card">
+      <h2>Score progression</h2>
+      ${scoreLineChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
     </div>
   </div>
 
-  ${statsPanelHtml}
-
-  <div class="card">
-    <h2>Score progression</h2>
-    ${scoreLineChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
-  </div>
-
-  <div class="card">
-    <h2>Team comparison</h2>
-    ${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}
-    ${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
-  </div>
-
-  <div class="card">
-    <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem;">
-      <h2>Play-by-play (${(g.playLog||[]).length})</h2>
-      <button class="btn secondary" id="togglePlayLogBtn" style="padding:0.35rem 0.7rem; font-size:0.75rem; flex-shrink:0;">${playLogExpanded ? 'Collapse' : 'Expand'}</button>
+  <div class="live-screen live-screen-comparison">
+    <div class="card">
+      <h2>Team comparison</h2>
+      <div class="live-comparison-flex">
+        <div>${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}</div>
+        <div>${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}</div>
+      </div>
     </div>
-    ${playLogExpanded ? playLogHtml(g) : ''}
+  </div>
+
+  <div class="live-screen live-screen-playlog">
+    <div class="card">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem;">
+        <h2>Play-by-play (${(g.playLog||[]).length})</h2>
+        <button class="btn secondary" id="togglePlayLogBtn" style="padding:0.35rem 0.7rem; font-size:0.75rem; flex-shrink:0;">${playLogExpanded ? 'Collapse' : 'Expand'}</button>
+      </div>
+      ${playLogExpanded ? playLogHtml(g) : ''}
+    </div>
   </div>
   `;
 }
