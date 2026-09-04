@@ -378,7 +378,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getFirestore, doc, getDoc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 /* ---------------------------------------------------------------
    STORAGE HELPERS — Firestore as the source of truth, with a
@@ -2013,7 +2013,12 @@ function renderUserBadge(){
   if(btn) btn.onclick = () => signOut(auth);
 }
 document.getElementById('googleSignInBtn').addEventListener('click', async () => {
-  try{ await signInWithPopup(auth, googleProvider); }
+  // Redirect (not popup) sign-in: Safari's tracking prevention blocks the
+  // background storage handshake signInWithPopup needs to hand the result
+  // back to this tab, so the popup silently closes without completing.
+  // A full-page redirect avoids that entirely and is also just more
+  // reliable on mobile Safari in general, which is where this app lives.
+  try{ await signInWithRedirect(auth, googleProvider); }
   catch(e){ console.error('sign-in failed', e); alert('Sign-in failed: ' + ((e&&e.message)||String(e))); }
 });
 
@@ -2043,6 +2048,11 @@ if(bootIsSharedView){
   init();
 } else {
   // Everything else requires the visitor to be signed in as themselves.
+  // getRedirectResult surfaces any error from the signInWithRedirect flow
+  // above (e.g. the popup-era "account exists with different credential"
+  // case); onAuthStateChanged below is what actually drives init() once
+  // Firebase has resolved the redirect internally.
+  getRedirectResult(auth).catch(e => console.error('redirect sign-in failed', e));
   onAuthStateChanged(auth, (user) => {
     if(user){
       currentUser = user;
