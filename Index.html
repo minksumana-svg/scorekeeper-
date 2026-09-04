@@ -110,15 +110,25 @@
   .scoreboard{
     background:var(--panel-2); border:2px solid var(--wood); border-radius:14px;
     padding:1rem; margin-bottom:1rem;
-    display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:0.5rem;
+    display:grid; grid-template-columns:auto 1fr auto 1fr auto; align-items:center; gap:0.5rem;
   }
   .sb-team{text-align:center;}
   .sb-team .sb-tag{font-size:0.6rem; letter-spacing:0.12em; color:var(--wood-light); font-weight:700; margin-bottom:0.1rem;}
   .sb-team .label{font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--paper-dim); margin-bottom:0.15rem;}
   .sb-team .score{font-family:'Space Mono',monospace; font-size:2.4rem; font-weight:700; color:var(--accent); line-height:1;}
+  .sb-fouls{font-family:'Space Mono',monospace; font-size:0.7rem; color:var(--make); font-weight:700; margin-top:0.2rem;}
+  .sb-fouls.bonus{color:var(--miss);}
   .sb-mid{text-align:center;}
-  .sb-mid .clock{font-family:'Space Mono',monospace; font-size:1.4rem; color:var(--paper);}
-  .sb-mid .qtag{font-size:0.7rem; color:var(--wood-light); text-transform:uppercase; letter-spacing:0.08em; margin-top:0.15rem;}
+  .clock-center{cursor:pointer;}
+  .clock-center .clock{font-family:'Space Mono',monospace; font-size:1.4rem; color:var(--paper);}
+  .clock-center .qtag{font-size:0.7rem; color:var(--wood-light); text-transform:uppercase; letter-spacing:0.08em; margin-top:0.15rem;}
+  /* Deliberately at the outer edges of the whole scoreboard, away from the
+     clock and each other, so they're hard to hit by accident. */
+  .sb-ctrl-btn{
+    flex-shrink:0; width:2.6rem; height:2.6rem; padding:0 !important;
+    display:flex; align-items:center; justify-content:center; font-size:1.15rem;
+    border-radius:50%;
+  }
 
   .quarter-tabs{display:flex; gap:0.4rem; margin-bottom:0.8rem; flex-wrap:wrap;}
   .quarter-tabs button{
@@ -127,7 +137,6 @@
   }
   .quarter-tabs button.active{background:var(--accent); color:var(--ink); border-color:var(--accent);}
 
-  .clock-controls{display:flex; gap:0.5rem; margin-bottom:0.9rem;}
 
   .court-slot.opponent-slot{border-color:var(--wood); background:var(--panel);}
   .court-slot.opponent-slot.active{border-color:var(--accent);}
@@ -170,22 +179,49 @@
   .stat-btn.other{border-color:var(--wood);}
   .stat-btn:active{transform:scale(0.95);}
 
-  .bar-chart{display:flex; flex-direction:column; gap:0.7rem; margin:0.5rem 0;}
+  .bar-chart{display:flex; flex-direction:column; gap:0.6rem; margin:0.5rem 0;}
   .bar-cat{font-size:0.68rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--wood-light); font-weight:700; margin-bottom:0.25rem;}
-  .bar-line{display:grid; grid-template-columns:1fr 42px; align-items:center; gap:0.5rem; margin-bottom:0.2rem;}
-  .bar-track{background:var(--court); border-radius:6px; height:0.85rem; overflow:hidden;}
-  .bar-fill{height:100%; border-radius:6px; transition:width 0.2s ease;}
+  .bar-split-row{display:flex; align-items:center; gap:0.5rem;}
+  .bar-split-val{font-family:'Space Mono',monospace; font-size:0.72rem; flex-shrink:0; width:2.6rem;}
+  .bar-split-val.home{color:var(--accent); text-align:right;}
+  .bar-split-val.away{color:var(--away-accent); text-align:left;}
+  .bar-track.split{flex:1; display:flex; border-radius:6px; overflow:hidden; height:0.85rem;}
+  .bar-fill{height:100%; transition:width 0.2s ease;}
   .bar-fill.home{background:var(--accent);}
   .bar-fill.away{background:var(--away-accent);}
-  .bar-value{font-family:'Space Mono',monospace; font-size:0.72rem; text-align:right; color:var(--paper);}
   .bar-legend{display:flex; align-items:center; gap:0.3rem; font-size:0.72rem; color:var(--paper-dim); margin-top:0.3rem;}
   .legend-dot{display:inline-block; width:0.6rem; height:0.6rem; border-radius:50%; background:var(--accent);}
   .legend-dot.away{background:var(--away-accent);}
 
-  .clock-edit-btn{
-    background:none; border:none; color:var(--paper-dim); font-size:0.8rem;
-    padding:0.1rem 0.3rem; margin-top:0.1rem; cursor:pointer;
+  .play-log{display:flex; flex-direction:column; gap:0.4rem; max-height:420px; overflow-y:auto;}
+  .play-row{
+    display:flex; align-items:center; justify-content:space-between; gap:0.5rem;
+    background:var(--panel-2); border:1px solid var(--court-line); border-radius:8px;
+    padding:0.5rem 0.6rem;
   }
+  .play-row.editing{flex-direction:column; align-items:stretch; gap:0.5rem;}
+  .play-meta{display:flex; align-items:center; gap:0.5rem; font-size:0.8rem; min-width:0;}
+  .play-q{font-family:'Space Mono',monospace; font-size:0.7rem; color:var(--wood-light); flex-shrink:0;}
+  .play-time{font-size:0.68rem; color:var(--paper-dim); flex-shrink:0;}
+  .play-player{font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .play-action{color:var(--paper-dim); font-size:0.76rem; flex-shrink:0;}
+  .play-actions{display:flex; align-items:center; gap:0.3rem; flex-shrink:0;}
+  .play-edit-grid{display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.4rem;}
+  .play-edit-grid select{margin-bottom:0;}
+
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:1000;
+    display:flex; align-items:center; justify-content:center; padding:1rem;
+  }
+  .modal-card{
+    background:var(--panel); border:1px solid var(--wood); border-radius:14px;
+    padding:1rem; width:100%; max-width:820px; max-height:88vh; overflow:auto;
+  }
+  th[data-sort]{cursor:pointer; user-select:none; white-space:nowrap;}
+  th[data-sort].sorted{color:var(--accent);}
+  th[data-sort]:active{opacity:0.6;}
+
+  html{-webkit-text-size-adjust:100%; text-size-adjust:100%;} /* prevents Safari auto-inflating text on rotation, which was fighting our compact landscape sizing */
 
   table{width:100%; border-collapse:collapse; font-size:0.8rem;}
   th,td{padding:0.4rem 0.35rem; text-align:center; border-bottom:1px solid var(--court-line);}
@@ -209,6 +245,94 @@
     padding:0.7rem 0.9rem; font-size:0.82rem; line-height:1.4; display:none;
   }
   .storage-banner.show{display:block;}
+  .storage-banner.info{background:#2e2118; border-color:var(--wood);}
+
+  /* ---------------------------------------------------------------
+     PHONE LANDSCAPE — Live Game becomes a set of full-screen,
+     scroll-snapped sections so the main controls need no scrolling
+     to use, and each other section (progression/comparison/play-by-
+     play) is a deliberate swipe away rather than mixed together.
+     Targets short-viewport landscape (phones), not tablets/desktop.
+  --------------------------------------------------------------- */
+  @media (orientation:landscape) and (max-height:500px){
+    body.tab-live{ overflow:hidden; }
+    /* Only free up the full screen while actually on the Live tab — other
+       tabs keep normal nav access since they aren't scroll-snapped. */
+    body.tab-live .topbar, body.tab-live #tabs{ display:none; }
+    main{
+      max-width:none; padding:0; margin:0;
+      overflow-y:scroll; overflow-x:hidden;
+      scroll-snap-type:y mandatory;
+    }
+    /* Driven by the JS-measured real viewport height (--app-vh), not raw
+       vh/dvh units — those are unreliable across mobile browsers because of
+       address-bar height differences. Falls back to dvh then vh if JS
+       hasn't run yet. */
+    body.tab-live main{ height:var(--app-vh, 100dvh); height:var(--app-vh, 100vh); }
+    .live-screen{
+      min-height:var(--app-vh, 100dvh); min-height:var(--app-vh, 100vh);
+      scroll-snap-align:start; scroll-snap-stop:always;
+      padding:0.3rem 0.5rem; box-sizing:border-box;
+      display:flex; flex-direction:column; justify-content:flex-start;
+      overflow-y:auto; /* safety net: a tiny scroll beats invisible clipped content on an edge-case device */
+    }
+    .team-picker-card{ display:none; } /* switching teams isn't a mid-recording action */
+    .card{ padding:0.45rem 0.7rem; margin-bottom:0.35rem; }
+    h2{ font-size:0.95rem; margin-bottom:0.2rem; }
+    .scoreboard{ padding:0.5rem 0.6rem; margin-bottom:0.35rem; gap:0.4rem; }
+    .sb-team .score{ font-size:1.6rem; }
+    .sb-team .label{ font-size:0.7rem; }
+    .sb-fouls{ font-size:0.78rem; margin-top:0.15rem; }
+    .clock-center .clock{ font-size:1.25rem; }
+    .clock-center .qtag{ margin-top:0.05rem; font-size:0.7rem; }
+    .sb-ctrl-btn{ width:2.5rem; height:2.5rem; font-size:1.05rem; }
+    .quarter-tabs{ margin-bottom:0; gap:0.3rem; }
+    .quarter-tabs button{ padding:0.22rem 0.15rem; font-size:0.78rem; }
+    .live-panel-grid{ gap:0 0.8rem; }
+    .live-col-court h2, .live-col-stats h2{ margin-bottom:0.2rem; }
+    #subToggleBtn{ padding:0.25rem 0.55rem; font-size:0.75rem; }
+    /* On-court list becomes a 2-column grid instead of 6 stacked rows —
+       this is the single biggest space saver for fitting on one screen. */
+    .court-grid{
+      display:grid; grid-template-columns:1fr 1fr;
+      gap:0.3rem; margin-bottom:0.3rem;
+    }
+    .court-slot{ flex-wrap:wrap; padding:0.3rem 0.45rem; gap:0.2rem 0.35rem; }
+    .cs-info{ font-size:0.78rem; flex:1 1 auto; min-width:0; }
+    .cs-time{ font-size:0.7rem; }
+    .court-slot .btn{ padding:0.18rem 0.4rem; font-size:0.68rem; flex-shrink:0; }
+    .pc-meta{ font-size:0.7rem; gap:0.4rem; margin-bottom:0.3rem !important; flex-wrap:wrap; }
+    #undoLastPlayBtn{ padding:0.22rem 0.45rem !important; font-size:0.68rem !important; }
+    .stat-grid{ grid-template-columns:repeat(4,1fr) !important; gap:0.25rem; }
+    .stat-btn{ padding:0.3rem 0.15rem; font-size:0.66rem; line-height:1.2; }
+    .stat-btn .n{ font-size:0.75rem; margin-top:0.04rem; }
+
+    /* Score progression screen: the chart's own aspect ratio is tall
+       (built for a narrow portrait card), so stretched across a wide
+       landscape container it would render far taller than fits — cap its
+       rendered height explicitly instead of letting width:100% dictate it.
+       Uses the same measured --app-vh as the rest of the landscape layout
+       rather than raw vh, for the same address-bar-accuracy reasons. */
+    .live-screen-progression .card{ flex:1; display:flex; flex-direction:column; min-height:0; }
+    .score-line-svg{ width:auto !important; max-width:100%; max-height:calc(var(--app-vh, 100vh) * 0.75); margin:0 auto; }
+    .live-screen-progression .bar-legend{ font-size:0.72rem; justify-content:center; flex-wrap:wrap; text-align:center; }
+
+    /* Comparison screen: chart next to the table instead of stacked */
+    .live-comparison-flex{
+      display:flex; gap:1rem; align-items:flex-start; flex:1; min-height:0;
+    }
+    .live-comparison-flex > div{ flex:1; min-width:0; }
+    .live-comparison-flex table{ font-size:0.78rem; }
+    .live-comparison-flex th, .live-comparison-flex td{ padding:0.3rem 0.25rem; }
+    .live-screen-comparison .bar-chart{ gap:0.45rem; }
+    .live-screen-comparison .bar-cat{ font-size:0.7rem; margin-bottom:0.15rem; }
+    .live-screen-comparison .bar-track{ height:0.8rem; }
+
+    /* Box-score popup: same idea as the comparison table, just smaller */
+    .modal-card{ padding:0.7rem; max-height:82vh; }
+    .modal-card table{ font-size:0.72rem; }
+    .modal-card th, .modal-card td{ padding:0.3rem 0.3rem; }
+  }
 </style>
 </head>
 <body>
@@ -243,7 +367,9 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getFirestore, doc, getDoc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* ---------------------------------------------------------------
-   STORAGE HELPERS — backed by Firestore
+   STORAGE HELPERS — Firestore as the source of truth, with a
+   localStorage cache so the app keeps working with zero connectivity
+   and syncs automatically once a connection is available again.
 --------------------------------------------------------------- */
 const firebaseConfig = {
   apiKey: "AIzaSyAfZZBIPQWFFgKN9T1L8r_JaAnC87KyBqM",
@@ -260,34 +386,125 @@ const STORAGE_COLLECTION = 'storage'; // one doc per key, mirrors the old get/se
 
 const storageAvailable = true;
 
+const LS_PREFIX = 'sk_cache_';
+const LS_DIRTY_KEY = 'sk_dirty_keys';
+
+function lsGet(key){
+  try{ return localStorage.getItem(LS_PREFIX + key); }catch(e){ return null; }
+}
+function lsSet(key, valueStr){
+  try{ localStorage.setItem(LS_PREFIX + key, valueStr); return true; }catch(e){ console.error('localStorage set failed', e); return false; }
+}
+function getDirtyKeys(){
+  try{ return JSON.parse(localStorage.getItem(LS_DIRTY_KEY) || '[]'); }catch(e){ return []; }
+}
+function markDirty(key){
+  const dirty = new Set(getDirtyKeys());
+  dirty.add(key);
+  try{ localStorage.setItem(LS_DIRTY_KEY, JSON.stringify([...dirty])); }catch(e){}
+}
+function clearDirty(key){
+  const dirty = new Set(getDirtyKeys());
+  dirty.delete(key);
+  try{ localStorage.setItem(LS_DIRTY_KEY, JSON.stringify([...dirty])); }catch(e){}
+}
+
 async function loadJSON(key, fallback){
+  const cachedRaw = lsGet(key);
+  let cachedValue = fallback;
+  if(cachedRaw !== null){
+    try{ cachedValue = JSON.parse(cachedRaw); }catch(e){ cachedValue = fallback; }
+  }
+  if(!navigator.onLine) return cachedValue; // don't even try — go straight to what's on this device
   try{
     const snap = await getDoc(doc(db, STORAGE_COLLECTION, key));
     if(snap.exists()){
       const data = snap.data();
+      lsSet(key, data.value); // refresh local cache with the authoritative cloud copy
       try{ return JSON.parse(data.value); }catch(e){ return data.value; }
     }
-    return fallback;
+    return cachedValue; // no cloud doc yet (or it was deleted) — use whatever's cached, else fallback
   }catch(e){
-    console.error('load failed', key, e);
-    return fallback;
+    console.error('cloud load failed, using local cache instead', key, e);
+    return cachedValue;
   }
 }
-// Returns {ok:boolean, error?:string}
+// Returns {ok, synced, error?}. ok=false only if BOTH local and cloud saves failed.
+// synced=false means it's safely saved on this device but hasn't reached the cloud yet.
 async function saveJSON(key, value){
+  const valueStr = JSON.stringify(value);
+  const localOk = lsSet(key, valueStr);
+  if(!localOk){
+    // Local storage itself is unavailable/full — try the cloud directly as a last resort.
+    if(navigator.onLine){
+      try{
+        await setDoc(doc(db, STORAGE_COLLECTION, key), { value: valueStr, updatedAt: Date.now() });
+        return { ok:true, synced:true };
+      }catch(e){
+        return { ok:false, error: 'Could not save locally or to the cloud: ' + ((e&&e.message)||String(e)) };
+      }
+    }
+    return { ok:false, error: 'Could not save on this device (storage full or blocked), and you appear offline.' };
+  }
+  markDirty(key);
+  if(!navigator.onLine){
+    updateConnectivityBanner();
+    return { ok:true, synced:false };
+  }
   try{
-    await setDoc(doc(db, STORAGE_COLLECTION, key), { value: JSON.stringify(value), updatedAt: Date.now() });
-    return { ok:true };
+    await setDoc(doc(db, STORAGE_COLLECTION, key), { value: valueStr, updatedAt: Date.now() });
+    clearDirty(key);
+    updateConnectivityBanner();
+    return { ok:true, synced:true };
   }catch(e){
-    console.error('save failed', key, e);
-    return { ok:false, error: (e && e.message) ? e.message : String(e) };
+    console.error('cloud save failed, kept safe locally for later sync', key, e);
+    updateConnectivityBanner();
+    return { ok:true, synced:false, error: (e && e.message) ? e.message : String(e) };
   }
 }
+// Retries every unsynced key. Called on reconnect and on a periodic timer.
+async function syncPendingWrites(){
+  if(!navigator.onLine) { updateConnectivityBanner(); return; }
+  const dirty = getDirtyKeys();
+  for(const key of dirty){
+    const raw = lsGet(key);
+    if(raw === null){ clearDirty(key); continue; }
+    try{
+      await setDoc(doc(db, STORAGE_COLLECTION, key), { value: raw, updatedAt: Date.now() });
+      clearDirty(key);
+    }catch(e){
+      console.error('background sync failed for', key, e); // will retry next pass
+    }
+  }
+  updateConnectivityBanner();
+}
+function updateConnectivityBanner(){
+  const banner = document.getElementById('storageBanner');
+  if(!banner) return;
+  const dirty = getDirtyKeys();
+  if(!navigator.onLine){
+    banner.textContent = '📴 Offline — changes are saving on this device and will sync automatically once you\'re back online.' + (dirty.length ? ` (${dirty.length} change${dirty.length===1?'':'s'} waiting)` : '');
+    banner.classList.add('show','info');
+  } else if(dirty.length > 0){
+    banner.textContent = `🔄 Syncing ${dirty.length} change${dirty.length===1?'':'s'} to the cloud…`;
+    banner.classList.add('show','info');
+  } else {
+    banner.classList.remove('show','info');
+  }
+}
+window.addEventListener('online', () => { updateConnectivityBanner(); syncPendingWrites(); });
+window.addEventListener('offline', () => { updateConnectivityBanner(); });
+setInterval(syncPendingWrites, 15000); // safety-net retry in case a 'wifi with no internet' state never fires 'online'
+
 function flashStatus(elId, res){
   const el = document.getElementById(elId);
   if(!el) return;
   const ok = res === true || res?.ok;
-  el.textContent = ok ? '✓ Saved' : '⚠ ' + (res?.error ? res.error : 'Save failed — try again');
+  let text;
+  if(!ok) text = '⚠ ' + (res?.error ? res.error : 'Save failed — try again');
+  else if(res?.synced === false) text = '✓ Saved offline — will sync';
+  else text = '✓ Saved';
+  el.textContent = text;
   el.className = 'save-status ' + (ok ? 'ok' : 'err');
   clearTimeout(el._t);
   el._t = setTimeout(() => { el.textContent=''; }, 4000);
@@ -304,6 +521,12 @@ let activeGameId = null;
 let currentGame = null; // full game object when on live tab
 let selectedPlayerId = null; // which on-court player (or 'OPPONENT') the panel is recording for
 let showSubPicker = false; // whether the bench picker is expanded
+let editingPlayId = null; // play-by-play entry currently being edited
+let editingPlayerId = null; // roster player currently being edited inline
+let playLogExpanded = false; // whether the play-by-play list is expanded
+let lastSaveIssue = null; // null | 'offline' | 'error' — drives the live-game save banner across re-renders
+let boxScoreOpen = false; // whether the sortable box-score popup is showing
+let boxScoreSort = 'pts'; // which column the popup is currently sorted by
 let activeTab = 'roster';
 let clockTimer = null;
 let saveDebounce = null;
@@ -318,6 +541,81 @@ function gameKey(gameId){ return 'game:' + activeTeamId + ':' + gameId; }
 const emptyQuarterStat = () => ({ fgm2:0, fga2:0, fgm3:0, fga3:0, ftm:0, fta:0, oreb:0, dreb:0, to:0, fouls:0, blk:0, stl:0, plusMinus:0, seconds:0 });
 const QUARTERS = ['q1','q2','q3','q4','ot'];
 const QLABELS = {q1:'Q1', q2:'Q2', q3:'Q3', q4:'Q4', ot:'OT'};
+const FIELD_LABELS = {
+  fgm2:'2PT Make', fga2miss:'2PT Miss', fgm3:'3PT Make', fga3miss:'3PT Miss',
+  ftm:'FT Make', ftamiss:'FT Miss', oreb:'Off Reb', dreb:'Def Reb',
+  stl:'Steal', blk:'Block', to:'Turnover', fouls:'Foul'
+};
+const FIELD_ORDER = Object.keys(FIELD_LABELS);
+// Applies (sign=1) or reverses (sign=-1) a play's effect on the stat sheet,
+// including the +/- adjustment for whoever was on court at the time.
+// Shared by recording, editing, and deleting plays so the math can't drift.
+function applyPlayEffect(game, play, sign){
+  const q = play.quarter;
+  const isOpp = play.playerId === 'OPPONENT';
+  const qs = isOpp ? game.oppStats[q] : (game.stats[play.playerId] && game.stats[play.playerId][q]);
+  if(!qs) return;
+  let scored = 0;
+  switch(play.field){
+    case 'fgm2': qs.fgm2 += sign; qs.fga2 += sign; scored = 2; break;
+    case 'fga2miss': qs.fga2 += sign; break;
+    case 'fgm3': qs.fgm3 += sign; qs.fga3 += sign; scored = 3; break;
+    case 'fga3miss': qs.fga3 += sign; break;
+    case 'ftm': qs.ftm += sign; qs.fta += sign; scored = 1; break;
+    case 'ftamiss': qs.fta += sign; break;
+    case 'oreb': qs.oreb += sign; break;
+    case 'dreb': qs.dreb += sign; break;
+    case 'stl': qs.stl += sign; break;
+    case 'blk': qs.blk += sign; break;
+    case 'to': qs.to += sign; break;
+    case 'fouls': qs.fouls += sign; break;
+  }
+  if(scored > 0){
+    const delta = (isOpp ? -scored : scored) * sign;
+    (play.onCourtSnapshot||[]).forEach(pid => {
+      if(game.stats[pid]) game.stats[pid][q].plusMinus += delta;
+    });
+  }
+}
+// Renders the play-by-play list. `game` may be currentGame (live) or a
+// loaded game object (History) — editingPlayId is shared module state.
+function playLogHtml(game){
+  const plays = [...(game.playLog||[])].reverse(); // most recent first
+  if(plays.length === 0) return `<div class="empty" style="padding:0.8rem;">No plays recorded yet.</div>`;
+  return `<div class="play-log">${plays.map(play => {
+    if(editingPlayId === play.id){
+      const playerOptions = [`<option value="OPPONENT" ${play.playerId==='OPPONENT'?'selected':''}>${escapeHtml(game.opponent||'Opponent')} (team)</option>`]
+        .concat(roster.players.map(p=>`<option value="${escapeAttr(p.id)}" ${play.playerId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`)).join('');
+      const fieldOptions = FIELD_ORDER.map(f=>`<option value="${f}" ${play.field===f?'selected':''}>${FIELD_LABELS[f]}</option>`).join('');
+      const qOptions = QUARTERS.map(q=>`<option value="${q}" ${play.quarter===q?'selected':''}>${QLABELS[q]}</option>`).join('');
+      return `
+      <div class="play-row editing" data-play-id="${play.id}">
+        <div class="play-edit-grid">
+          <select data-edit-quarter>${qOptions}</select>
+          <select data-edit-play-player>${playerOptions}</select>
+          <select data-edit-field>${fieldOptions}</select>
+        </div>
+        <div class="play-actions">
+          <button class="btn secondary" data-save-play="${play.id}">Save</button>
+          <button class="backlink" data-cancel-play="${play.id}">Cancel</button>
+        </div>
+      </div>`;
+    }
+    return `
+    <div class="play-row">
+      <div class="play-meta">
+        <span class="play-time mono">${play.clockAtPlay!=null ? fmtClock(play.clockAtPlay) : '--:--'}</span>
+        <span class="play-q">${QLABELS[play.quarter]}</span>
+        <span class="play-player">${escapeHtml(play.playerName)}</span>
+        <span class="play-action">${FIELD_LABELS[play.field]||play.field}</span>
+      </div>
+      <div class="play-actions">
+        <button class="icon-btn" style="color:var(--wood-light);" data-edit-play="${play.id}" aria-label="Edit play">✎</button>
+        <button class="icon-btn" data-delete-play="${play.id}" aria-label="Delete play">✕</button>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
 
 function newGame(opponent, date, homeAway, quarterMinutes, otMinutes){
   const id = 'g_' + Date.now();
@@ -338,6 +636,7 @@ function newGame(opponent, date, homeAway, quarterMinutes, otMinutes){
     otLengthSec: otLen,
     quarterRemaining: { q1:qLen, q2:qLen, q3:qLen, q4:qLen, ot:otLen }, // countdown clock, per quarter
     oppStats: { q1:emptyQuarterStat(), q2:emptyQuarterStat(), q3:emptyQuarterStat(), q4:emptyQuarterStat(), ot:emptyQuarterStat() }, // opponent tracked like a player
+    playLog: [], // { id, quarter, playerId ('OPPONENT' or a roster id), playerName, field, onCourtSnapshot, ts }
     stats
   };
 }
@@ -404,24 +703,81 @@ function comparisonTableHtml(game, usName, oppName){
 function comparisonBarChartHtml(game, usName, oppName){
   const rows = comparisonRows(game);
   const bars = rows.map(([label,hv,av,isPct]) => {
-    const max = Math.max(hv, av, 1);
-    const hPct = Math.round(hv/max*100), aPct = Math.round(av/max*100);
+    const total = hv + av;
+    const homeShare = total > 0 ? (hv/total*100) : 50; // a/(a+b)
+    const awayShare = total > 0 ? (av/total*100) : 50; // b/(a+b)
     const suffix = isPct ? '%' : '';
     return `
     <div class="bar-group">
       <div class="bar-cat">${label}</div>
-      <div class="bar-line">
-        <div class="bar-track"><div class="bar-fill home" style="width:${hPct}%;"></div></div>
-        <div class="bar-value">${hv}${suffix}</div>
-      </div>
-      <div class="bar-line">
-        <div class="bar-track"><div class="bar-fill away" style="width:${aPct}%;"></div></div>
-        <div class="bar-value">${av}${suffix}</div>
+      <div class="bar-split-row">
+        <span class="bar-split-val home">${hv}${suffix}</span>
+        <div class="bar-track split">
+          <div class="bar-fill home" style="width:${homeShare}%;"></div>
+          <div class="bar-fill away" style="width:${awayShare}%;"></div>
+        </div>
+        <span class="bar-split-val away">${av}${suffix}</span>
       </div>
     </div>`;
   }).join('');
   return `<div class="bar-chart">${bars}</div>
   <div class="bar-legend"><span class="legend-dot home"></span>${escapeHtml(usName)} &nbsp; <span class="legend-dot away"></span>${escapeHtml(oppName)}</div>`;
+}
+// Whether a quarter has any recorded activity — always true for Q1-Q4,
+// conditional for OT so unused overtime periods don't clutter the chart.
+function quarterHasActivity(game, q){
+  if(q !== 'ot') return true;
+  const homeAny = Object.values(game.stats).some(s => {
+    const qs = s.ot; if(!qs) return false;
+    return qs.fgm2||qs.fga2||qs.fgm3||qs.fga3||qs.ftm||qs.fta||qs.oreb||qs.dreb||qs.to||qs.fouls||qs.blk||qs.stl||qs.seconds;
+  });
+  const o = (game.oppStats && game.oppStats.ot) || {};
+  const oppAny = o.fgm2||o.fga2||o.fgm3||o.fga3||o.ftm||o.fta||o.oreb||o.dreb||o.to||o.fouls||o.blk||o.stl;
+  return !!(homeAny || oppAny);
+}
+// Cumulative-score line chart, one point per quarter boundary.
+function scoreLineChartHtml(game, usName, oppName){
+  const quartersPlayed = QUARTERS.filter(q => quarterHasActivity(game, q));
+  let cumHome = 0, cumAway = 0;
+  const points = [{ label:'Start', home:0, away:0, homeQ:null, awayQ:null }];
+  quartersPlayed.forEach(q => {
+    const hQ = Object.values(game.stats).reduce((sum,s)=>sum+playerPoints(s[q]),0);
+    const aQ = playerPoints((game.oppStats && game.oppStats[q]) || emptyQuarterStat());
+    cumHome += hQ; cumAway += aQ;
+    points.push({ label: QLABELS[q], home: cumHome, away: cumAway, homeQ: hQ, awayQ: aQ });
+  });
+
+  const W = 340, H = 200, padL = 16, padR = 16, padT = 26, padB = 26;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const n = points.length;
+  const xStep = n > 1 ? innerW/(n-1) : 0;
+  const maxVal = Math.max(1, ...points.map(p => Math.max(p.home, p.away)));
+  const xOf = i => padL + i*xStep;
+  const yOf = v => padT + innerH - (v/maxVal)*innerH;
+
+  const homePts = points.map((p,i)=>`${xOf(i)},${yOf(p.home)}`).join(' ');
+  const awayPts = points.map((p,i)=>`${xOf(i)},${yOf(p.away)}`).join(' ');
+  const gridLines = points.map((p,i)=>`<line x1="${xOf(i)}" y1="${padT}" x2="${xOf(i)}" y2="${padT+innerH}" style="stroke:var(--court-line); stroke-width:1;" stroke-dasharray="2,3"/>`).join('');
+  const xLabels = points.map((p,i)=>`<text x="${xOf(i)}" y="${H-6}" text-anchor="middle" font-size="9" style="fill:var(--paper-dim); font-family:'Space Mono',monospace;">${p.label}</text>`).join('');
+  const homeDots = points.map((p,i)=>`<circle cx="${xOf(i)}" cy="${yOf(p.home)}" r="3" style="fill:var(--accent);"/>`).join('');
+  const awayDots = points.map((p,i)=>`<circle cx="${xOf(i)}" cy="${yOf(p.away)}" r="3" style="fill:var(--away-accent);"/>`).join('');
+  // Points scored IN that quarter (not cumulative) labeled right at each dot.
+  const homeQLabels = points.map((p,i)=> p.homeQ==null ? '' : `<text x="${xOf(i)}" y="${yOf(p.home)-7}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--accent); font-family:'Space Mono',monospace;">${p.homeQ}</text>`).join('');
+  const awayQLabels = points.map((p,i)=> p.awayQ==null ? '' : `<text x="${xOf(i)}" y="${yOf(p.away)+15}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--away-accent); font-family:'Space Mono',monospace;">${p.awayQ}</text>`).join('');
+  const lastHome = points[points.length-1].home, lastAway = points[points.length-1].away;
+
+  return `
+  <svg viewBox="0 0 ${W} ${H}" class="score-line-svg" style="width:100%; height:auto; display:block;">
+    ${gridLines}
+    <polyline points="${homePts}" fill="none" style="stroke:var(--accent); stroke-width:2.5;" stroke-linejoin="round" stroke-linecap="round"/>
+    <polyline points="${awayPts}" fill="none" style="stroke:var(--away-accent); stroke-width:2.5;" stroke-linejoin="round" stroke-linecap="round"/>
+    ${homeDots}${awayDots}${homeQLabels}${awayQLabels}${xLabels}
+  </svg>
+  <div class="bar-legend"><span class="legend-dot home"></span>${escapeHtml(usName)} (${lastHome}) &nbsp; <span class="legend-dot away"></span>${escapeHtml(oppName)} (${lastAway}) &nbsp; <span style="color:var(--paper-dim);">— numbers at each point are that quarter's points</span></div>`;
+}
+function fmtTimestamp(ts){
+  if(!ts) return '';
+  return new Date(ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
 }
 function fmtClock(sec){
   const m = Math.floor(sec/60), s = sec%60;
@@ -441,9 +797,22 @@ async function flushGame(){
   if(!currentGame) return;
   const res = await saveJSON(gameKey(currentGame.id), currentGame);
   gameCache[currentGame.id] = currentGame;
+  lastSaveIssue = !res.ok ? 'error' : (res.synced === false ? 'offline' : null);
   const banner = document.getElementById('liveSaveWarning');
-  if(banner) banner.classList.toggle('show', !res.ok);
+  if(banner) applyLiveSaveBanner(banner);
   return res;
+}
+function applyLiveSaveBanner(banner){
+  if(lastSaveIssue === 'error'){
+    banner.textContent = "⚠️ Could not save this update anywhere — check your device storage. Keep playing, but write the score down as backup.";
+    banner.classList.remove('info');
+    banner.classList.add('show');
+  } else if(lastSaveIssue === 'offline'){
+    banner.textContent = "📴 Offline — this is saved safely on your device and will sync automatically once you're back online.";
+    banner.classList.add('show','info');
+  } else {
+    banner.classList.remove('show','info');
+  }
 }
 async function persistGamesIndex(){
   await saveJSON(teamKey('games-index'), gamesIndex);
@@ -456,28 +825,21 @@ async function loadGame(id){
   if(g) gameCache[id] = g;
   return g;
 }
-function updateIndexSummary(){
-  const idx = gamesIndex.findIndex(g => g.id === currentGame.id);
+function updateIndexSummaryFor(game){
+  const idx = gamesIndex.findIndex(g => g.id === game.id);
   const summary = {
-    id: currentGame.id, date: currentGame.date, opponent: currentGame.opponent,
-    homeScore: homeScore(currentGame), awayScore: awayScore(currentGame), final: currentGame.final,
-    homeAway: currentGame.homeAway, excludeFromSeason: currentGame.excludeFromSeason
+    id: game.id, date: game.date, opponent: game.opponent,
+    homeScore: homeScore(game), awayScore: awayScore(game), final: game.final,
+    homeAway: game.homeAway, excludeFromSeason: game.excludeFromSeason
   };
   if(idx >= 0) gamesIndex[idx] = summary; else gamesIndex.unshift(summary);
 }
+function updateIndexSummary(){ updateIndexSummaryFor(currentGame); }
 
 /* ---------------------------------------------------------------
    INIT
 --------------------------------------------------------------- */
 async function init(){
-  let dbReachable = true;
-  try{
-    await getDoc(doc(db, STORAGE_COLLECTION, 'teams')); // connectivity probe
-  }catch(e){
-    dbReachable = false;
-    console.error('database unreachable at startup', e);
-  }
-
   teams = await loadJSON('teams', []);
   activeTeamId = await loadJSON('active-team-id', null);
 
@@ -493,10 +855,36 @@ async function init(){
     await saveJSON('active-team-id', activeTeamId);
   }
 
+  // Shared links (?team=...&game=... or ?team=...&view=season) override which
+  // team/tab loads for THIS pageview only — never persisted as your own
+  // preference, so opening someone's shared link doesn't hijack your app.
+  const params = new URLSearchParams(window.location.search);
+  const urlTeam = params.get('team');
+  const urlGame = params.get('game');
+  const urlView = params.get('view');
+  if(urlTeam && teams.find(t => t.id === urlTeam)) activeTeamId = urlTeam;
+
   await loadTeamData();
   if(currentGame) activeTab = 'live';
+  updateConnectivityBanner();
+  syncPendingWrites(); // catch up on anything left unsynced from a previous offline session
 
-  if(!storageAvailable || !dbReachable) document.getElementById('storageBanner').classList.add('show');
+  // A shared link is a standalone read-only report: no tabs, no team
+  // switcher, no roster/history chrome — just the requested content.
+  if(urlGame || urlView === 'season'){
+    const topbarEl = document.querySelector('.topbar');
+    const tabsEl = document.getElementById('tabs');
+    if(topbarEl) topbarEl.style.display = 'none';
+    if(tabsEl) tabsEl.style.display = 'none';
+    if(urlGame){
+      await renderSharedGame(urlGame);
+    } else {
+      activeTab = 'season';
+      render();
+    }
+    return;
+  }
+
   bindTabs();
   bindTeamSwitcher();
   renderTeamSelector();
@@ -514,7 +902,9 @@ async function loadTeamData(){
   gamesIndex = gamesIndexRes;
   activeGameId = activeGameIdRes;
   currentGame = null;
-  selectedPlayerId = null; showSubPicker = false;
+  selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null;
+  boxScoreOpen = false; boxScoreSort = 'pts';
+  editingPlayerId = null;
   if(activeGameId){
     currentGame = await loadGame(activeGameId);
   }
@@ -577,11 +967,12 @@ function setTab(tab){
    RENDER ROOT
 --------------------------------------------------------------- */
 function render(){
+  document.body.classList.toggle('tab-live', activeTab === 'live'); // lets landscape CSS free up full-screen space only here
   const app = document.getElementById('app');
   if(activeTab==='roster') app.innerHTML = renderRoster();
   else if(activeTab==='live') app.innerHTML = renderLive();
   else if(activeTab==='history') app.innerHTML = renderHistory();
-  else if(activeTab==='season') app.innerHTML = renderSeason();
+  else if(activeTab==='season'){ renderSeason(); return; } // manages its own async content + handler binding
   attachHandlers();
 }
 
@@ -613,10 +1004,20 @@ function renderRoster(){
   <div class="card">
     <h2>Roster (${roster.players.length})</h2>
     ${roster.players.length===0 ? `<div class="empty"><span class="ball">🏀</span>No players yet. Add your first player above.</div>` :
-      roster.players.map(p => `
+      roster.players.map(p => editingPlayerId === p.id ? `
+        <div class="player-list-item editing" data-player-row="${p.id}" style="align-items:center;">
+          <input type="text" class="edit-player-name" value="${escapeAttr(p.name)}" style="flex:1; margin:0 0.4rem 0 0;">
+          <input type="number" class="edit-player-num" value="${p.number ?? ''}" min="0" max="99" style="width:60px; margin:0 0.4rem 0 0;">
+          <button class="btn secondary" data-save-player="${p.id}" style="padding:0.35rem 0.7rem; font-size:0.75rem; flex-shrink:0;">Save</button>
+          <button class="backlink" data-cancel-player="${p.id}" style="margin-left:0.4rem; flex-shrink:0;">Cancel</button>
+        </div>
+      ` : `
         <div class="player-list-item">
           <span class="player-name"><span class="player-num">${p.number ?? '–'}</span>${escapeHtml(p.name)}</span>
-          <button class="icon-btn" data-remove-player="${p.id}" aria-label="Remove ${escapeAttr(p.name)}">✕</button>
+          <span>
+            <button class="icon-btn" style="color:var(--wood-light);" data-edit-player="${p.id}" aria-label="Edit ${escapeAttr(p.name)}">✎</button>
+            <button class="icon-btn" data-remove-player="${p.id}" aria-label="Remove ${escapeAttr(p.name)}">✕</button>
+          </span>
         </div>
       `).join('')}
   </div>
@@ -633,7 +1034,7 @@ function renderRoster(){
 --------------------------------------------------------------- */
 function renderLive(){
   const teamPicker = `
-  <div class="card" style="padding:0.75rem 1rem;">
+  <div class="card team-picker-card" style="padding:0.75rem 1rem;">
     <label style="margin-bottom:0.3rem;">Team</label>
     <select id="liveTeamSelector">
       ${teams.map(t => `<option value="${escapeAttr(t.id)}" ${t.id===activeTeamId?'selected':''}>${escapeHtml(t.name)}</option>`).join('')}
@@ -677,6 +1078,10 @@ function renderLive(){
 
   const quarterTabs = QUARTERS.map(qk => `<button data-quarter="${qk}" class="${qk===q?'active':''}">${QLABELS[qk]}</button>`).join('');
 
+  // Team fouls for the CURRENT quarter — separate from individual player foul totals.
+  const teamFoulsThisQ = Object.values(g.stats).reduce((sum,s) => sum + (s[q].fouls||0), 0);
+  const oppFoulsThisQ = (g.oppStats[q] && g.oppStats[q].fouls) || 0;
+
   // Selection bookkeeping: only an on-court player (or the opponent) can be selected for stat entry.
   if(selectedPlayerId && selectedPlayerId !== 'OPPONENT' && !g.onCourt.includes(selectedPlayerId)) selectedPlayerId = null;
   if(!selectedPlayerId && g.onCourt.length > 0) selectedPlayerId = g.onCourt[0];
@@ -691,7 +1096,7 @@ function renderLive(){
         <span class="cs-name">${escapeHtml(p.name)}</span>
       </div>
       <span class="cs-time mono">${fmtClock(totalPlayerStat(p.id,'seconds'))}</span>
-      <button class="btn secondary" data-sub-out="${p.id}">Sub out</button>
+      <button class="btn secondary" data-sub-out="${p.id}">Out</button>
     </div>`).join('');
 
   const opponentTileHtml = `
@@ -716,6 +1121,7 @@ function renderLive(){
   const isOpp = selectedPlayerId === 'OPPONENT';
   const selPlayer = isOpp ? { id:'OPPONENT', name: g.opponent||'Opponent' } : roster.players.find(p => p.id === selectedPlayerId);
   const selQs = isOpp ? (g.oppStats[q] || emptyQuarterStat()) : (selPlayer ? g.stats[selPlayer.id][q] : null);
+  const lastPlayForSel = (g.playLog||[]).slice().reverse().find(p => p.playerId === selectedPlayerId);
 
   const statsPanelHtml = `
   <div class="card">
@@ -733,7 +1139,10 @@ function renderLive(){
       </div>
       <div class="live-col-stats">
         ${selPlayer ? `
-        <h2>Recording for ${escapeHtml(selPlayer.name)}</h2>
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
+          <h2 style="margin-bottom:0.3rem;">Recording for ${escapeHtml(selPlayer.name)}</h2>
+          <button class="btn secondary" id="undoLastPlayBtn" ${lastPlayForSel?'':'disabled'} style="padding:0.3rem 0.6rem; font-size:0.72rem; flex-shrink:0;" title="${lastPlayForSel ? 'Undo: '+(FIELD_LABELS[lastPlayForSel.field]||lastPlayForSel.field) : 'No recent play to undo'}">↩ Undo last</button>
+        </div>
         <div class="pc-meta" id="selPlayerMeta" style="margin-bottom:0.7rem;">
           <span class="pc-pts">${playerPoints(selQs)} PTS (${QLABELS[q]})</span>
           ${isOpp ? '' : `<span>Q time ${fmtClock(selQs.seconds)}</span><span>Game time ${fmtClock(totalPlayerStat(selPlayer.id,'seconds'))}</span><span>${totalPlayerStat(selPlayer.id,'plusMinus')>=0?'+':''}${totalPlayerStat(selPlayer.id,'plusMinus')} +/-</span>`}
@@ -757,34 +1166,72 @@ function renderLive(){
   </div>`;
 
   return teamPicker + `
-  <div class="storage-banner" id="liveSaveWarning">⚠️ The last stat update didn't save — check your connection. Keep playing; I'll keep retrying, but write down the score as backup.</div>
-  <div class="scoreboard">
-    <div class="sb-team"><div class="sb-tag">${g.homeAway==='away'?'AWAY':'HOME'}</div><div class="label">${escapeHtml(currentTeamName())}</div><div class="score mono">${hs}</div></div>
-    <div class="sb-mid">
-      <div class="clock mono" id="clockDisplay">${fmtClock(remaining)}</div>
-      <button class="clock-edit-btn" id="editClockBtn" title="Edit clock" aria-label="Edit clock">✏️ edit</button>
-      <div class="qtag">${quarterOver ? `END OF ${QLABELS[q]}` : QLABELS[q]}${g.clockRunning?' · LIVE':''}</div>
+  <div class="live-screen live-screen-main">
+    <div class="storage-banner ${lastSaveIssue ? 'show' : ''} ${lastSaveIssue==='offline' ? 'info' : ''}" id="liveSaveWarning">${
+      lastSaveIssue === 'error' ? "⚠️ Could not save this update anywhere — check your device storage. Keep playing, but write the score down as backup." :
+      lastSaveIssue === 'offline' ? "📴 Offline — this is saved safely on your device and will sync automatically once you're back online." : ''
+    }</div>
+    <div class="scoreboard">
+      <button class="btn secondary sb-ctrl-btn" id="clockToggle" ${quarterOver?'disabled':''} aria-label="${g.clockRunning?'Pause clock':'Start clock'}">${g.clockRunning?'⏸':'▶'}</button>
+      <div class="sb-team">
+        <div class="sb-tag">${g.homeAway==='away'?'AWAY':'HOME'}</div>
+        <div class="label">${escapeHtml(currentTeamName())}</div>
+        <div class="score mono">${hs}</div>
+        <div class="sb-fouls ${teamFoulsThisQ>=5?'bonus':''}">${teamFoulsThisQ}</div>
+      </div>
+      <div class="sb-mid">
+        <div class="clock-center" id="clockDisplayWrap" title="Tap to edit clock">
+          <div class="clock mono" id="clockDisplay">${fmtClock(remaining)}</div>
+          <div class="qtag">${quarterOver ? `END ${QLABELS[q]}` : QLABELS[q]}${g.clockRunning?' · LIVE':''} ✏️</div>
+        </div>
+      </div>
+      <div class="sb-team">
+        <div class="sb-tag">${g.homeAway==='away'?'HOME':'AWAY'}</div>
+        <div class="label">${escapeHtml(g.opponent||'Opponent')}</div>
+        <div class="score mono">${as}</div>
+        <div class="sb-fouls ${oppFoulsThisQ>=5?'bonus':''}">${oppFoulsThisQ}</div>
+      </div>
+      <button class="btn danger sb-ctrl-btn" id="endGameBtn" aria-label="End game">⏹</button>
     </div>
-    <div class="sb-team"><div class="sb-tag">${g.homeAway==='away'?'HOME':'AWAY'}</div><div class="label">${escapeHtml(g.opponent||'Opponent')}</div><div class="score mono">${as}</div></div>
+
+    <div class="card">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
+        <div class="quarter-tabs" style="flex:1 1 auto;">${quarterTabs}</div>
+        <button class="btn secondary" id="openBoxScoreBtn" style="flex-shrink:0;">📊 Box score</button>
+      </div>
+    </div>
+
+    ${statsPanelHtml}
   </div>
 
-  <div class="card">
-    <div class="quarter-tabs">${quarterTabs}</div>
-    <div class="clock-controls">
-      ${quarterOver
-        ? `<button class="btn secondary" disabled>End of ${QLABELS[q]} — ${fmtClock(0)}</button>`
-        : `<button class="btn ${g.clockRunning?'secondary':''}" id="clockToggle">${g.clockRunning?'⏸ Pause clock':'▶ Start clock'}</button>`}
-      <button class="btn secondary" id="endGameBtn">End game</button>
+  <div class="live-screen live-screen-progression">
+    <div class="card">
+      <h2>Score progression</h2>
+      ${scoreLineChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
     </div>
   </div>
 
-  ${statsPanelHtml}
-
-  <div class="card">
-    <h2>Team comparison</h2>
-    ${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}
-    ${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
+  <div class="live-screen live-screen-comparison">
+    <div class="card">
+      <h2>Team comparison</h2>
+      <div class="live-comparison-flex">
+        <div>${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}</div>
+        <div>${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}</div>
+      </div>
+    </div>
   </div>
+
+  <div class="live-screen live-screen-playlog">
+    <div class="card">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem;">
+        <h2>Play-by-play (${(g.playLog||[]).length})</h2>
+        <button class="btn secondary" id="togglePlayLogBtn" style="padding:0.35rem 0.7rem; font-size:0.75rem; flex-shrink:0;">${playLogExpanded ? 'Collapse' : 'Expand'}</button>
+      </div>
+      ${playLogExpanded ? playLogHtml(g) : ''}
+    </div>
+  </div>
+
+  ${boxScoreOpen ? boxScoreModalHtml(g) : ''}
   `;
 }
 
@@ -813,13 +1260,20 @@ function renderHistory(){
   <div id="gameDetail"></div>`;
 }
 
-async function renderGameDetail(gameId){
-  const g = await loadGame(gameId);
-  if(!g) return;
-  const box = document.getElementById('gameDetail');
-  const playerRows = roster.players.map(p => {
+// Builds the sorted box-score rows + bolded team-total rows — shared by the
+// History detail view and the standalone shared-game report.
+// Raw per-player box-score numbers for one game — shared by the static
+// History view and the sortable live popup, so the math can't drift.
+function computePlayerBoxRows(g){
+  return roster.players.map(p => {
     const s = g.stats[p.id]; if(!s) return null;
     const pts = QUARTERS.reduce((sum,q)=>sum+playerPoints(s[q]),0);
+    const fgm2 = QUARTERS.reduce((sum,q)=>sum+s[q].fgm2,0);
+    const fga2 = QUARTERS.reduce((sum,q)=>sum+s[q].fga2,0);
+    const fgm3 = QUARTERS.reduce((sum,q)=>sum+s[q].fgm3,0);
+    const fga3 = QUARTERS.reduce((sum,q)=>sum+s[q].fga3,0);
+    const ftm = QUARTERS.reduce((sum,q)=>sum+s[q].ftm,0);
+    const fta = QUARTERS.reduce((sum,q)=>sum+s[q].fta,0);
     const oreb = QUARTERS.reduce((sum,q)=>sum+s[q].oreb,0);
     const dreb = QUARTERS.reduce((sum,q)=>sum+s[q].dreb,0);
     const stl = QUARTERS.reduce((sum,q)=>sum+(s[q].stl||0),0);
@@ -828,55 +1282,176 @@ async function renderGameDetail(gameId){
     const fouls = QUARTERS.reduce((sum,q)=>sum+s[q].fouls,0);
     const sec = QUARTERS.reduce((sum,q)=>sum+s[q].seconds,0);
     const plusMinus = QUARTERS.reduce((sum,q)=>sum+(s[q].plusMinus||0),0);
-    return { name:p.name, pts, oreb, dreb, stl, blk, to, fouls, sec, plusMinus };
-  }).filter(Boolean).sort((a,b) => b.pts - a.pts); // descending by points
+    const fgm = fgm2+fgm3, fga = fga2+fga3;
+    return {
+      id:p.id, name:p.name, pts, fgm, fga, fgm2, fga2, fgm3, fga3, ftm, fta,
+      fg2pct: pct(fgm2,fga2), fg3pct: pct(fgm3,fga3), ftpct: pct(ftm,fta),
+      oreb, dreb, stl, blk, to, fouls, sec, plusMinus
+    };
+  }).filter(Boolean);
+}
+function buildBoxScore(g){
+  const playerRows = computePlayerBoxRows(g).sort((a,b) => b.pts - a.pts); // descending by points
 
-  const rows = playerRows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.oreb}</td><td>${r.dreb}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td></tr>`).join('');
+  const rows = playerRows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.fgm}/${r.fga}</td><td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td><td>${r.oreb}</td><td>${r.dreb}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td></tr>`).join('');
 
   const teamTotals = aggregateTeamStats(g, true);
   const oppTotals = aggregateTeamStats(g, false);
   const teamPts = teamTotals.fgm2*2 + teamTotals.fgm3*3 + teamTotals.ftm;
   const oppPts = oppTotals.fgm2*2 + oppTotals.fgm3*3 + oppTotals.ftm;
+  const teamFgm = teamTotals.fgm2+teamTotals.fgm3, teamFga = teamTotals.fga2+teamTotals.fga3;
+  const oppFgm = oppTotals.fgm2+oppTotals.fgm3, oppFga = oppTotals.fga2+oppTotals.fga3;
   const totalsRows = `
     <tr style="font-weight:700; border-top:2px solid var(--wood);">
-      <td>${escapeHtml(currentTeamName())} Total</td><td>${teamPts}</td><td>${teamTotals.oreb}</td><td>${teamTotals.dreb}</td><td>${teamTotals.stl}</td><td>${teamTotals.blk}</td><td>${teamTotals.to}</td><td>${teamTotals.fouls}</td><td>—</td><td>—</td>
+      <td>${escapeHtml(currentTeamName())} Total</td><td>${teamPts}</td><td>${teamFgm}/${teamFga}</td><td>${pct(teamTotals.fgm2,teamTotals.fga2)}%</td><td>${pct(teamTotals.fgm3,teamTotals.fga3)}%</td><td>${pct(teamTotals.ftm,teamTotals.fta)}%</td><td>${teamTotals.oreb}</td><td>${teamTotals.dreb}</td><td>${teamTotals.stl}</td><td>${teamTotals.blk}</td><td>${teamTotals.to}</td><td>${teamTotals.fouls}</td><td>—</td><td>—</td>
     </tr>
     <tr style="font-weight:700;">
-      <td>${escapeHtml(g.opponent||'Opponent')} Total</td><td>${oppPts}</td><td>${oppTotals.oreb}</td><td>${oppTotals.dreb}</td><td>${oppTotals.stl}</td><td>${oppTotals.blk}</td><td>${oppTotals.to}</td><td>${oppTotals.fouls}</td><td>—</td><td>—</td>
+      <td>${escapeHtml(g.opponent||'Opponent')} Total</td><td>${oppPts}</td><td>${oppFgm}/${oppFga}</td><td>${pct(oppTotals.fgm2,oppTotals.fga2)}%</td><td>${pct(oppTotals.fgm3,oppTotals.fga3)}%</td><td>${pct(oppTotals.ftm,oppTotals.fta)}%</td><td>${oppTotals.oreb}</td><td>${oppTotals.dreb}</td><td>${oppTotals.stl}</td><td>${oppTotals.blk}</td><td>${oppTotals.to}</td><td>${oppTotals.fouls}</td><td>—</td><td>—</td>
     </tr>`;
-
+  return { rows, totalsRows };
+}
+// Sortable box-score popup for the Live tab — tap a header to sort by it.
+const BOX_MODAL_COLUMNS = [
+  { key:'name', label:'Player' },
+  { key:'pts', label:'PTS' },
+  { key:'fgLabel', label:'FG' },
+  { key:'fg2pct', label:'2P%' },
+  { key:'fg3pct', label:'3P%' },
+  { key:'ftpct', label:'FT%' },
+  { key:'oreb', label:'OREB' },
+  { key:'dreb', label:'DREB' },
+  { key:'stl', label:'STL' },
+  { key:'blk', label:'BLK' },
+  { key:'to', label:'TO' },
+  { key:'fouls', label:'FLS' },
+  { key:'sec', label:'MIN' },
+  { key:'plusMinus', label:'+/-' },
+];
+function boxScoreModalHtml(g){
+  const rows = computePlayerBoxRows(g).sort((a,b) => {
+    if(boxScoreSort === 'name') return a.name.localeCompare(b.name);
+    if(boxScoreSort === 'fgLabel') return b.fgm - a.fgm;
+    return (b[boxScoreSort]||0) - (a[boxScoreSort]||0);
+  });
+  const headerCells = BOX_MODAL_COLUMNS.map(c =>
+    `<th data-sort="${c.key}" class="${boxScoreSort===c.key?'sorted':''}">${c.label}${boxScoreSort===c.key?' ▾':''}</th>`
+  ).join('');
+  const bodyRows = rows.map(r => `<tr>
+    <td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.fgm}/${r.fga}</td>
+    <td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td>
+    <td>${r.oreb}</td><td>${r.dreb}</td><td>${r.stl}</td><td>${r.blk}</td>
+    <td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td>
+    <td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td>
+  </tr>`).join('');
+  return `
+  <div class="modal-backdrop" id="boxScoreBackdrop">
+    <div class="modal-card">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.7rem;">
+        <h2>Box score — tap a header to sort</h2>
+        <button class="icon-btn" id="closeBoxScore" aria-label="Close" style="color:var(--paper-dim); font-size:1.3rem;">✕</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <tr>${headerCells}</tr>
+          ${bodyRows || `<tr><td colspan="14" style="text-align:center; color:var(--paper-dim); padding:1rem;">No players yet</td></tr>`}
+        </table>
+      </div>
+    </div>
+  </div>`;
+}
+// Builds the quarter-by-quarter score table + Home/Away labels — also shared.
+function buildQuarterTable(g){
   const quarterTable = QUARTERS.map(q => {
     const homeQ = Object.values(g.stats).reduce((sum,s)=>sum+playerPoints(s[q]),0);
     const awayQ = playerPoints((g.oppStats && g.oppStats[q]) || emptyQuarterStat());
     return `<tr><td>${QLABELS[q]}</td><td>${homeQ}</td><td>${awayQ}</td></tr>`;
   }).join('');
-
   const prefix = g.homeAway==='away' ? '@' : 'vs';
   const usTag = g.homeAway==='away' ? 'Away' : 'Home';
   const oppTag = g.homeAway==='away' ? 'Home' : 'Away';
+  return { quarterTable, prefix, usTag, oppTag };
+}
+// Standalone read-only report for a shared game link — no nav, no tabs, no
+// edit controls, just the four sections that were asked for.
+async function renderSharedGame(gameId){
+  const g = await loadGame(gameId);
+  const app = document.getElementById('app');
+  if(!g){
+    app.innerHTML = `<div class="card"><div class="empty"><span class="ball">🏀</span>This game link doesn't match any saved game.</div></div>`;
+    return;
+  }
+  const { quarterTable, prefix, usTag, oppTag } = buildQuarterTable(g);
+  const { rows, totalsRows } = buildBoxScore(g);
+  app.innerHTML = `
+  <div class="card">
+    <h2>${escapeHtml(currentTeamName())} ${prefix} ${escapeHtml(g.opponent||'Opponent')} — ${g.date||''}</h2>
+    <div class="section-label">Score by quarter</div>
+    <div class="table-wrap"><table><tr><th>Qtr</th><th>${escapeHtml(currentTeamName())} (${usTag})</th><th>${escapeHtml(g.opponent||'Opp')} (${oppTag})</th></tr>${quarterTable}
+      <tr><th>Total</th><th>${homeScore(g)}</th><th>${awayScore(g)}</th></tr></table></div>
+  </div>
+  <div class="card">
+    <h2>Score progression</h2>
+    ${scoreLineChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
+  </div>
+  <div class="card">
+    <h2>Team comparison</h2>
+    ${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}
+    ${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
+  </div>
+  <div class="card">
+    <h2>Box score — sorted by points</h2>
+    <div class="table-wrap"><table>
+      <tr><th>Player</th><th>PTS</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
+      ${rows}
+      ${totalsRows}
+    </table></div>
+  </div>`;
+}
+async function renderGameDetail(gameId){
+  const g = await loadGame(gameId);
+  const box = document.getElementById('gameDetail');
+  if(!g){
+    if(box) box.innerHTML = `<div class="card"><div class="empty"><span class="ball">🏀</span>That game link doesn't match any saved game for this team.</div></div>`;
+    return;
+  }
+  const { rows, totalsRows } = buildBoxScore(g);
+  const { quarterTable, prefix, usTag, oppTag } = buildQuarterTable(g);
 
   box.innerHTML = `
   <div class="card">
     <button class="backlink" id="closeDetail">← Back to schedule</button>
     <h2>${escapeHtml(currentTeamName())} ${prefix} ${escapeHtml(g.opponent||'Opponent')} — ${g.date||''}</h2>
-    <div style="display:flex; gap:0.5rem; margin-bottom:0.9rem;">
+    <div style="display:flex; gap:0.5rem; margin-bottom:0.9rem; flex-wrap:wrap;">
+      <button class="btn secondary" id="shareGameBtn">🔗 Share game</button>
       <button class="btn secondary" id="toggleExcludeBtn">${g.excludeFromSeason ? 'Include in season stats' : 'Exclude from season stats'}</button>
       <button class="btn danger" id="deleteGameBtn">Delete game</button>
     </div>
     <div class="section-label">Score by quarter</div>
     <div class="table-wrap"><table><tr><th>Qtr</th><th>${escapeHtml(currentTeamName())} (${usTag})</th><th>${escapeHtml(g.opponent||'Opp')} (${oppTag})</th></tr>${quarterTable}
       <tr><th>Total</th><th>${homeScore(g)}</th><th>${awayScore(g)}</th></tr></table></div>
+    <div class="section-label">Score progression</div>
+    ${scoreLineChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
     <div class="section-label">Team comparison — all categories</div>
     ${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}
     ${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
     <div class="section-label">Box score — sorted by points</div>
     <div class="table-wrap"><table>
-      <tr><th>Player</th><th>PTS</th><th>OREB</th><th>DREB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
+      <tr><th>Player</th><th>PTS</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
       ${rows}
       ${totalsRows}
     </table></div>
+    <div class="section-label" style="display:flex; align-items:center; justify-content:space-between;">
+      <span>Play-by-play (${(g.playLog||[]).length})</span>
+      <button class="btn secondary" id="togglePlayLogBtn" style="padding:0.25rem 0.6rem; font-size:0.7rem;">${playLogExpanded ? 'Collapse' : 'Expand'}</button>
+    </div>
+    ${playLogExpanded ? playLogHtml(g) : ''}
   </div>`;
 
+  document.getElementById('togglePlayLogBtn').onclick = () => { playLogExpanded = !playLogExpanded; renderGameDetail(g.id); };
+  document.getElementById('shareGameBtn').onclick = () => {
+    const url = buildShareUrl({ team: activeTeamId, game: g.id });
+    shareLink(url, `${currentTeamName()} ${prefix} ${g.opponent||'Opponent'} — ${g.date||''}`);
+  };
   document.getElementById('toggleExcludeBtn').onclick = async () => {
     g.excludeFromSeason = !g.excludeFromSeason;
     const res = await saveJSON(gameKey(g.id), g);
@@ -888,6 +1463,54 @@ async function renderGameDetail(gameId){
     if(!res.ok){ alert('Could not save: ' + res.error); g.excludeFromSeason = !g.excludeFromSeason; }
     renderGameDetail(g.id);
   };
+  // Play-by-play edit/delete (History view) — saves immediately since there's
+  // no live-game autosave loop backing this screen.
+  document.querySelectorAll('[data-edit-play]').forEach(btn => {
+    btn.onclick = () => { editingPlayId = btn.dataset.editPlay; renderGameDetail(g.id); };
+  });
+  document.querySelectorAll('[data-cancel-play]').forEach(btn => {
+    btn.onclick = () => { editingPlayId = null; renderGameDetail(g.id); };
+  });
+  document.querySelectorAll('[data-save-play]').forEach(btn => {
+    btn.onclick = async () => {
+      const id = btn.dataset.savePlay;
+      const play = (g.playLog||[]).find(p => p.id === id);
+      if(!play){ editingPlayId = null; renderGameDetail(g.id); return; }
+      const row = btn.closest('.play-row');
+      const newQ = row.querySelector('[data-edit-quarter]').value;
+      const newPlayerId = row.querySelector('[data-edit-play-player]').value;
+      const newField = row.querySelector('[data-edit-field]').value;
+      applyPlayEffect(g, play, -1);
+      play.quarter = newQ;
+      play.playerId = newPlayerId;
+      play.playerName = newPlayerId === 'OPPONENT' ? (g.opponent||'Opponent') : (roster.players.find(p=>p.id===newPlayerId)?.name || 'Player');
+      play.field = newField;
+      applyPlayEffect(g, play, 1);
+      editingPlayId = null;
+      const res = await saveJSON(gameKey(g.id), g);
+      gameCache[g.id] = g;
+      updateIndexSummaryFor(g);
+      await persistGamesIndex();
+      if(!res.ok) alert('Could not save: ' + res.error);
+      renderGameDetail(g.id);
+    };
+  });
+  document.querySelectorAll('[data-delete-play]').forEach(btn => {
+    btn.onclick = async () => {
+      if(!confirm('Delete this play? Its stats will be removed.')) return;
+      const id = btn.dataset.deletePlay;
+      const idx = (g.playLog||[]).findIndex(p => p.id === id);
+      if(idx === -1) return;
+      applyPlayEffect(g, g.playLog[idx], -1);
+      g.playLog.splice(idx,1);
+      const res = await saveJSON(gameKey(g.id), g);
+      gameCache[g.id] = g;
+      updateIndexSummaryFor(g);
+      await persistGamesIndex();
+      if(!res.ok) alert('Could not save: ' + res.error);
+      renderGameDetail(g.id);
+    };
+  });
   document.getElementById('deleteGameBtn').onclick = async () => {
     if(!confirm('Delete this game permanently? This cannot be undone.')) return;
     await deleteDoc(doc(db, STORAGE_COLLECTION, gameKey(g.id))).catch(()=>{});
@@ -896,7 +1519,8 @@ async function renderGameDetail(gameId){
     delete gameCache[g.id];
     if(currentGame?.id === g.id){
       currentGame = null;
-      selectedPlayerId = null; showSubPicker = false;
+      selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null;
+  boxScoreOpen = false; boxScoreSort = 'pts';
       activeGameId = null;
       await saveJSON(teamKey('active-game-id'), null);
     }
@@ -939,8 +1563,11 @@ async function renderSeason(){
     });
   });
 
-  const rows = roster.players.map(p => {
-    const t = totals[p.id]; if(!t) return '';
+  const rows = roster.players
+    .filter(p => totals[p.id]) // guard against stray ids
+    .sort((a,b) => (totals[b.id].pts||0) - (totals[a.id].pts||0)) // descending by season points
+    .map(p => {
+    const t = totals[p.id];
     const gp = t.games.size || 0;
     const ppg = gp ? (t.pts/gp).toFixed(1) : '0.0';
     const fg2pct = t.fga2 ? Math.round(100*t.fgm2/t.fga2) : 0;
@@ -954,17 +1581,44 @@ async function renderSeason(){
     </tr>`;
   }).join('');
 
+  // Season-wide team vs. all-opponents aggregate, same shape as a single game's totals rows.
+  const seasonTeam = { fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0,oreb:0,dreb:0,stl:0,blk:0,to:0,fouls:0 };
+  const seasonOpp = { fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0,oreb:0,dreb:0,stl:0,blk:0,to:0,fouls:0 };
+  allGames.forEach(g => {
+    const ht = aggregateTeamStats(g, true), ot = aggregateTeamStats(g, false);
+    Object.keys(seasonTeam).forEach(k => { seasonTeam[k] += ht[k]; seasonOpp[k] += ot[k]; });
+  });
+  const gpAll = allGames.length;
+  const seasonTeamPts = seasonTeam.fgm2*2 + seasonTeam.fgm3*3 + seasonTeam.ftm;
+  const seasonOppPts = seasonOpp.fgm2*2 + seasonOpp.fgm3*3 + seasonOpp.ftm;
+  const seasonSummaryRows = gpAll === 0 ? '' : `
+    <tr style="font-weight:700; border-top:2px solid var(--wood);">
+      <td>${escapeHtml(currentTeamName())} Total</td><td>${gpAll}</td><td>${seasonTeamPts}</td><td>${(seasonTeamPts/gpAll).toFixed(1)}</td>
+      <td>${seasonTeam.oreb+seasonTeam.dreb}</td><td>${seasonTeam.stl}</td><td>${seasonTeam.blk}</td><td>${seasonTeam.to}</td><td>${seasonTeam.fouls}</td>
+      <td>${pct(seasonTeam.fgm2,seasonTeam.fga2)}%</td><td>${pct(seasonTeam.fgm3,seasonTeam.fga3)}%</td><td>${pct(seasonTeam.ftm,seasonTeam.fta)}%</td><td>—</td><td>—</td>
+    </tr>
+    <tr style="font-weight:700;">
+      <td>All Opponents Total</td><td>${gpAll}</td><td>${seasonOppPts}</td><td>${(seasonOppPts/gpAll).toFixed(1)}</td>
+      <td>${seasonOpp.oreb+seasonOpp.dreb}</td><td>${seasonOpp.stl}</td><td>${seasonOpp.blk}</td><td>${seasonOpp.to}</td><td>${seasonOpp.fouls}</td>
+      <td>${pct(seasonOpp.fgm2,seasonOpp.fga2)}%</td><td>${pct(seasonOpp.fgm3,seasonOpp.fga3)}%</td><td>${pct(seasonOpp.ftm,seasonOpp.fta)}%</td><td>—</td><td>—</td>
+    </tr>`;
+
   const excludedCount = gamesIndex.length - allGames.length;
   app.innerHTML = `
   <div class="card">
-    <h2>${escapeHtml(currentTeamName())} — season totals</h2>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
+      <h2>${escapeHtml(currentTeamName())} — season totals</h2>
+      <button class="btn secondary" id="shareSeasonBtn" style="flex-shrink:0;">🔗 Share season</button>
+    </div>
     ${excludedCount > 0 ? `<div class="section-label" style="margin-top:-0.4rem;">${excludedCount} game${excludedCount===1?'':'s'} excluded from these totals</div>` : ''}
     ${allGames.length===0 ? `<div class="empty"><span class="ball">🏀</span>No games recorded yet this season.</div>` : `
     <div class="table-wrap"><table>
       <tr><th>Player</th><th>GP</th><th>PTS</th><th>PPG</th><th>REB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>2P%</th><th>3P%</th><th>FT%</th><th>MPG</th><th>+/-</th></tr>
       ${rows}
+      ${seasonSummaryRows}
     </table></div>`}
   </div>`;
+  attachHandlers(); // real content is in the DOM now — bind Share button etc.
 }
 
 /* ---------------------------------------------------------------
@@ -974,6 +1628,13 @@ function attachHandlers(){
   // Live tab's inline team picker (mirrors the top-bar selector)
   const liveTeamSel = document.getElementById('liveTeamSelector');
   if(liveTeamSel) liveTeamSel.onchange = (e) => switchTeam(e.target.value);
+
+  // Season: share link
+  const shareSeasonBtn = document.getElementById('shareSeasonBtn');
+  if(shareSeasonBtn) shareSeasonBtn.onclick = () => {
+    const url = buildShareUrl({ team: activeTeamId, view: 'season' });
+    shareLink(url, `${currentTeamName()} — season stats`);
+  };
 
   // Roster
   const saveTeamBtn = document.getElementById('saveTeamName');
@@ -1036,6 +1697,33 @@ function attachHandlers(){
       render();
     };
   });
+  document.querySelectorAll('[data-edit-player]').forEach(btn => {
+    btn.onclick = () => { editingPlayerId = btn.dataset.editPlayer; render(); };
+  });
+  document.querySelectorAll('[data-cancel-player]').forEach(btn => {
+    btn.onclick = () => { editingPlayerId = null; render(); };
+  });
+  document.querySelectorAll('[data-save-player]').forEach(btn => {
+    btn.onclick = async () => {
+      const pid = btn.dataset.savePlayer;
+      const row = btn.closest('[data-player-row]');
+      const newName = row.querySelector('.edit-player-name').value.trim();
+      const newNumRaw = row.querySelector('.edit-player-num').value;
+      if(!newName){ alert('Name cannot be empty.'); return; }
+      const player = roster.players.find(p => p.id === pid);
+      if(!player) return;
+      const prevName = player.name, prevNum = player.number;
+      player.name = newName;
+      player.number = newNumRaw !== '' ? parseInt(newNumRaw) : null;
+      const res = await saveJSON(teamKey('roster'), roster);
+      if(!res.ok){
+        player.name = prevName; player.number = prevNum;
+        alert('Could not save: ' + res.error);
+      }
+      editingPlayerId = null;
+      render();
+    };
+  });
 
   // Live: start game
   const startBtn = document.getElementById('startGameBtn');
@@ -1046,7 +1734,8 @@ function attachHandlers(){
     const quarterMinutes = document.getElementById('quarterMinInput').value;
     const otMinutes = document.getElementById('otMinInput').value;
     currentGame = newGame(opp, date, homeAway, quarterMinutes, otMinutes);
-    selectedPlayerId = null; showSubPicker = false;
+    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null;
+  boxScoreOpen = false; boxScoreSort = 'pts';
     activeGameId = currentGame.id;
     await saveJSON(teamKey('active-game-id'), activeGameId);
     updateIndexSummary();
@@ -1073,9 +1762,9 @@ function attachHandlers(){
     render();
   };
 
-  // Live: manually correct the quarter clock (timing mismatches happen)
-  const editClockBtn = document.getElementById('editClockBtn');
-  if(editClockBtn) editClockBtn.onclick = () => {
+  // Live: manually correct the quarter clock (timing mismatches happen) — tap the clock itself
+  const clockDisplayWrap = document.getElementById('clockDisplayWrap');
+  if(clockDisplayWrap) clockDisplayWrap.onclick = () => {
     if(currentGame.clockRunning) pauseClock();
     const q = currentGame.currentQuarter;
     const input = prompt(`Set the ${QLABELS[q]} clock (MM:SS):`, fmtClock(currentGame.quarterRemaining[q]));
@@ -1092,6 +1781,23 @@ function attachHandlers(){
   if(subToggleBtn) subToggleBtn.onclick = () => { showSubPicker = !showSubPicker; render(); };
   const closeSubPicker = document.getElementById('closeSubPicker');
   if(closeSubPicker) closeSubPicker.onclick = () => { showSubPicker = false; render(); };
+
+  // Live: play-by-play expand/collapse
+  const togglePlayLogBtn = document.getElementById('togglePlayLogBtn');
+  if(togglePlayLogBtn) togglePlayLogBtn.onclick = () => { playLogExpanded = !playLogExpanded; render(); };
+
+  // Live: sortable box-score popup
+  const openBoxScoreBtn = document.getElementById('openBoxScoreBtn');
+  if(openBoxScoreBtn) openBoxScoreBtn.onclick = () => { boxScoreOpen = true; render(); };
+  const closeBoxScore = document.getElementById('closeBoxScore');
+  if(closeBoxScore) closeBoxScore.onclick = () => { boxScoreOpen = false; render(); };
+  const boxScoreBackdrop = document.getElementById('boxScoreBackdrop');
+  if(boxScoreBackdrop) boxScoreBackdrop.onclick = (e) => {
+    if(e.target === boxScoreBackdrop){ boxScoreOpen = false; render(); } // click outside the card closes it
+  };
+  document.querySelectorAll('#boxScoreBackdrop [data-sort]').forEach(th => {
+    th.onclick = () => { boxScoreSort = th.dataset.sort; render(); };
+  });
 
   // Live: select a player on court (whole tile, excluding the Sub out button)
   document.querySelectorAll('[data-select-player]').forEach(el => {
@@ -1127,36 +1833,81 @@ function attachHandlers(){
     };
   });
 
-  // Live: stat buttons — apply to whichever player (or the opponent) is selected
+  // Live: stat buttons — apply to whichever player (or the opponent) is selected,
+  // and record it as an editable/deletable play-by-play entry.
   document.querySelectorAll('[data-field]').forEach(btn => {
     btn.onclick = () => {
       if(!selectedPlayerId) return;
-      const q = currentGame.currentQuarter;
       const isOppSel = selectedPlayerId === 'OPPONENT';
-      const qs = isOppSel ? currentGame.oppStats[q] : currentGame.stats[selectedPlayerId][q];
-      let scored = 0; // points just scored, for +/- purposes
-      switch(btn.dataset.field){
-        case 'fgm2': qs.fgm2++; qs.fga2++; scored = 2; break;
-        case 'fga2miss': qs.fga2++; break;
-        case 'fgm3': qs.fgm3++; qs.fga3++; scored = 3; break;
-        case 'fga3miss': qs.fga3++; break;
-        case 'ftm': qs.ftm++; qs.fta++; scored = 1; break;
-        case 'ftamiss': qs.fta++; break;
-        case 'oreb': qs.oreb++; break;
-        case 'dreb': qs.dreb++; break;
-        case 'stl': qs.stl++; break;
-        case 'blk': qs.blk++; break;
-        case 'to': qs.to++; break;
-        case 'fouls': qs.fouls++; break;
-      }
-      // +/-: every basket adjusts the running total for whoever is on court right now —
-      // up for our players when we score, down for our players when the opponent scores.
-      if(scored > 0){
-        const delta = isOppSel ? -scored : scored;
-        currentGame.onCourt.forEach(pid => {
-          if(currentGame.stats[pid]) currentGame.stats[pid][q].plusMinus += delta;
-        });
-      }
+      const playerName = isOppSel ? (currentGame.opponent || 'Opponent') : (roster.players.find(p=>p.id===selectedPlayerId)?.name || 'Player');
+      const play = {
+        id: 'play_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+        quarter: currentGame.currentQuarter,
+        playerId: selectedPlayerId,
+        playerName,
+        field: btn.dataset.field,
+        onCourtSnapshot: [...currentGame.onCourt],
+        clockAtPlay: currentGame.quarterRemaining[currentGame.currentQuarter], // countdown time remaining when this happened
+        ts: Date.now()
+      };
+      applyPlayEffect(currentGame, play, 1);
+      if(!currentGame.playLog) currentGame.playLog = [];
+      currentGame.playLog.push(play);
+      queueSaveGame();
+      render();
+    };
+  });
+
+  // Live: quick undo — reverses the most recent play for whoever is selected
+  const undoLastPlayBtn = document.getElementById('undoLastPlayBtn');
+  if(undoLastPlayBtn) undoLastPlayBtn.onclick = () => {
+    const log = currentGame.playLog || [];
+    let idx = -1;
+    for(let i = log.length - 1; i >= 0; i--){
+      if(log[i].playerId === selectedPlayerId){ idx = i; break; }
+    }
+    if(idx === -1) return;
+    applyPlayEffect(currentGame, log[idx], -1);
+    log.splice(idx, 1);
+    queueSaveGame();
+    render();
+  };
+
+  // Live: play-by-play edit/delete
+  document.querySelectorAll('[data-edit-play]').forEach(btn => {
+    btn.onclick = () => { editingPlayId = btn.dataset.editPlay; render(); };
+  });
+  document.querySelectorAll('[data-cancel-play]').forEach(btn => {
+    btn.onclick = () => { editingPlayId = null; render(); };
+  });
+  document.querySelectorAll('[data-save-play]').forEach(btn => {
+    btn.onclick = () => {
+      const id = btn.dataset.savePlay;
+      const play = (currentGame.playLog||[]).find(p => p.id === id);
+      if(!play){ editingPlayId = null; render(); return; }
+      const row = btn.closest('.play-row');
+      const newQ = row.querySelector('[data-edit-quarter]').value;
+      const newPlayerId = row.querySelector('[data-edit-play-player]').value;
+      const newField = row.querySelector('[data-edit-field]').value;
+      applyPlayEffect(currentGame, play, -1); // undo old effect
+      play.quarter = newQ;
+      play.playerId = newPlayerId;
+      play.playerName = newPlayerId === 'OPPONENT' ? (currentGame.opponent||'Opponent') : (roster.players.find(p=>p.id===newPlayerId)?.name || 'Player');
+      play.field = newField;
+      applyPlayEffect(currentGame, play, 1); // apply new effect
+      editingPlayId = null;
+      queueSaveGame();
+      render();
+    };
+  });
+  document.querySelectorAll('[data-delete-play]').forEach(btn => {
+    btn.onclick = () => {
+      if(!confirm('Delete this play? Its stats will be removed.')) return;
+      const id = btn.dataset.deletePlay;
+      const idx = (currentGame.playLog||[]).findIndex(p => p.id === id);
+      if(idx === -1) return;
+      applyPlayEffect(currentGame, currentGame.playLog[idx], -1);
+      currentGame.playLog.splice(idx,1);
       queueSaveGame();
       render();
     };
@@ -1175,7 +1926,8 @@ function attachHandlers(){
     activeGameId = null;
     await saveJSON(teamKey('active-game-id'), null);
     currentGame = null;
-    selectedPlayerId = null; showSubPicker = false;
+    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null;
+  boxScoreOpen = false; boxScoreSort = 'pts';
     setTab('history');
     renderGameDetail(finishedGameId); // jump straight to the final summary, not just the schedule list
   };
@@ -1249,8 +2001,39 @@ function updateClockDisplayOnly(){
 /* ---------------------------------------------------------------
    UTIL
 --------------------------------------------------------------- */
+/* ---------------------------------------------------------------
+   SHARE LINKS
+--------------------------------------------------------------- */
+function buildShareUrl(extraParams){
+  const url = new URL(window.location.href);
+  url.search = '';
+  Object.entries(extraParams).forEach(([k,v]) => url.searchParams.set(k, v));
+  return url.toString();
+}
+async function shareLink(url, title){
+  if(navigator.share){
+    try{ await navigator.share({ title, url }); return; }catch(e){ /* cancelled or unsupported — fall through to clipboard */ }
+  }
+  try{
+    await navigator.clipboard.writeText(url);
+    alert('Link copied to clipboard:\n' + url);
+  }catch(e){
+    prompt('Copy this link:', url);
+  }
+}
 function escapeHtml(str){ return (str??'').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(str){ return escapeHtml(str); }
+
+// Mobile browsers report vh/dvh inconsistently (address bar height varies by
+// browser and changes as it hides/shows), so the landscape Live layout is
+// driven off this measured value instead — it always matches the real
+// visible viewport on whatever device this happens to be.
+function setAppViewportHeight(){
+  document.documentElement.style.setProperty('--app-vh', window.innerHeight + 'px');
+}
+setAppViewportHeight();
+window.addEventListener('resize', setAppViewportHeight);
+window.addEventListener('orientationchange', () => setTimeout(setAppViewportHeight, 150));
 
 init();
 </script>
