@@ -235,6 +235,25 @@
   .storage-banner.show{display:block;}
   .storage-banner.info{background:#2e2118; border-color:var(--wood);}
 
+  /* ---- auth gate ---- */
+  #authGate{
+    position:fixed; inset:0; z-index:1000;
+    background:var(--court);
+    display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:1rem; padding:2rem; text-align:center;
+  }
+  #authGate .ball{font-size:2.6rem;}
+  #authGate h1{font-size:1.4rem; text-transform:uppercase; color:var(--wood-light);}
+  #authGate p{color:var(--paper-dim); font-size:0.85rem; max-width:320px; line-height:1.5;}
+  #googleSignInBtn{
+    display:flex; align-items:center; gap:0.6rem; background:#fff; color:#1b120c;
+    border:none; padding:0.7rem 1.3rem; border-radius:8px; font-weight:700; font-size:0.9rem;
+  }
+  #authGate.hide, #authLoading.hide{display:none;}
+  .signout-btn{background:none; border:1px solid var(--court-line); color:var(--paper-dim); font-size:0.7rem; padding:0.35rem 0.6rem; border-radius:6px;}
+  .user-badge{display:flex; align-items:center; gap:0.5rem;}
+  .user-badge img{width:1.6rem; height:1.6rem; border-radius:50%;}
+
   /* ---------------------------------------------------------------
      PHONE LANDSCAPE — Live Game becomes a set of full-screen,
      scroll-snapped sections so the main controls need no scrolling
@@ -320,6 +339,16 @@
 </head>
 <body>
 
+<div id="authGate">
+  <span class="ball">🏀</span>
+  <h1>Courtside</h1>
+  <p>Sign in to keep your teams and games private to your account. Anyone you send a shared game or season link to can still view it without signing in.</p>
+  <button id="googleSignInBtn">
+    <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.7-3.88 2.7-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.84.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.94v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.95 10.7A5.4 5.4 0 0 1 3.67 9c0-.59.1-1.17.28-1.7V4.97H.94A9 9 0 0 0 0 9c0 1.45.35 2.83.94 4.03l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .94 4.97l3.01 2.33C4.66 5.17 6.65 3.58 9 3.58z"/></svg>
+    Sign in with Google
+  </button>
+</div>
+
 <div class="storage-banner" id="storageBanner">
   ⚠️ Can't reach the database right now. Check your internet connection and that the Firestore security rules allow access — your entries won't be saved until it's reachable.
 </div>
@@ -334,6 +363,7 @@
   <div class="team-switcher">
     <select id="teamSelector" aria-label="Select team"></select>
     <button id="newTeamBtn" class="icon-btn-plus" title="Add new team" aria-label="Add new team">+</button>
+    <div class="user-badge" id="userBadge"></div>
   </div>
 </div>
 <nav class="tabs" id="tabs">
@@ -348,11 +378,19 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getFirestore, doc, getDoc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 /* ---------------------------------------------------------------
    STORAGE HELPERS — Firestore as the source of truth, with a
    localStorage cache so the app keeps working with zero connectivity
    and syncs automatically once a connection is available again.
+
+   Every doc now lives under users/{uid}/storage/{key} instead of a
+   flat global collection, so Firestore rules can restrict writes to
+   the signed-in owner. Reads stay open (rules-side) so a shared game
+   or season link keeps working for someone who isn't signed in —
+   ownerUidOverride lets a read target another user's tree read-only,
+   without ever being used for a write.
 --------------------------------------------------------------- */
 const firebaseConfig = {
   apiKey: "AIzaSyAfZZBIPQWFFgKN9T1L8r_JaAnC87KyBqM",
@@ -365,45 +403,64 @@ const firebaseConfig = {
 };
 const fbApp = initializeApp(firebaseConfig);
 const db = getFirestore(fbApp);
-const STORAGE_COLLECTION = 'storage'; // one doc per key, mirrors the old get/set(key,value) shape
+const auth = getAuth(fbApp);
+const googleProvider = new GoogleAuthProvider();
 
 const storageAvailable = true;
 
+let currentUser = null;      // signed-in Firebase user, or null
+let ownerUidOverride = null; // set only while viewing someone else's shared link — read-only
+
+// The uid whose data we're currently reading — the shared-link owner if
+// we're on a shared read-only view, otherwise the signed-in user.
+function readUid(){ return ownerUidOverride || (currentUser && currentUser.uid); }
+// The uid we're allowed to write as — always the signed-in user, NEVER the
+// override, so a shared-link visitor can never write into someone else's data.
+function writeUid(){ return currentUser && currentUser.uid; }
+function storageDocRef(key, uid){ return doc(db, 'users', uid, 'storage', key); }
+
 const LS_PREFIX = 'sk_cache_';
 const LS_DIRTY_KEY = 'sk_dirty_keys';
+// Cache + dirty-queue entries are namespaced by uid too, since the same
+// device/browser can now have more than one Google account's data cached.
+function lsKey(uid, key){ return uid + '::' + key; }
 
-function lsGet(key){
-  try{ return localStorage.getItem(LS_PREFIX + key); }catch(e){ return null; }
+function lsGet(uid, key){
+  try{ return localStorage.getItem(LS_PREFIX + lsKey(uid,key)); }catch(e){ return null; }
 }
-function lsSet(key, valueStr){
-  try{ localStorage.setItem(LS_PREFIX + key, valueStr); return true; }catch(e){ console.error('localStorage set failed', e); return false; }
+function lsSet(uid, key, valueStr){
+  try{ localStorage.setItem(LS_PREFIX + lsKey(uid,key), valueStr); return true; }catch(e){ console.error('localStorage set failed', e); return false; }
 }
 function getDirtyKeys(){
   try{ return JSON.parse(localStorage.getItem(LS_DIRTY_KEY) || '[]'); }catch(e){ return []; }
 }
-function markDirty(key){
+function markDirty(uid, key){
   const dirty = new Set(getDirtyKeys());
-  dirty.add(key);
+  dirty.add(lsKey(uid,key));
   try{ localStorage.setItem(LS_DIRTY_KEY, JSON.stringify([...dirty])); }catch(e){}
 }
-function clearDirty(key){
+function clearDirty(uid, key){
   const dirty = new Set(getDirtyKeys());
-  dirty.delete(key);
+  dirty.delete(lsKey(uid,key));
   try{ localStorage.setItem(LS_DIRTY_KEY, JSON.stringify([...dirty])); }catch(e){}
 }
 
-async function loadJSON(key, fallback){
-  const cachedRaw = lsGet(key);
+// Reads use readUid() (falls back to the shared-link owner) unless an
+// explicit uid is passed — used when loading another user's shared game.
+async function loadJSON(key, fallback, uidOverride){
+  const uid = uidOverride || readUid();
+  if(!uid) return fallback;
+  const cachedRaw = lsGet(uid, key);
   let cachedValue = fallback;
   if(cachedRaw !== null){
     try{ cachedValue = JSON.parse(cachedRaw); }catch(e){ cachedValue = fallback; }
   }
   if(!navigator.onLine) return cachedValue; // don't even try — go straight to what's on this device
   try{
-    const snap = await getDoc(doc(db, STORAGE_COLLECTION, key));
+    const snap = await getDoc(storageDocRef(key, uid));
     if(snap.exists()){
       const data = snap.data();
-      lsSet(key, data.value); // refresh local cache with the authoritative cloud copy
+      lsSet(uid, key, data.value); // refresh local cache with the authoritative cloud copy
       try{ return JSON.parse(data.value); }catch(e){ return data.value; }
     }
     return cachedValue; // no cloud doc yet (or it was deleted) — use whatever's cached, else fallback
@@ -412,16 +469,21 @@ async function loadJSON(key, fallback){
     return cachedValue;
   }
 }
+// Writes always go under the signed-in user's own uid — never the shared-
+// link override — so a read-only visitor can't be tricked into writing
+// into someone else's tree even if app state gets confused.
 // Returns {ok, synced, error?}. ok=false only if BOTH local and cloud saves failed.
 // synced=false means it's safely saved on this device but hasn't reached the cloud yet.
 async function saveJSON(key, value){
+  const uid = writeUid();
+  if(!uid) return { ok:false, error:'Not signed in.' };
   const valueStr = JSON.stringify(value);
-  const localOk = lsSet(key, valueStr);
+  const localOk = lsSet(uid, key, valueStr);
   if(!localOk){
     // Local storage itself is unavailable/full — try the cloud directly as a last resort.
     if(navigator.onLine){
       try{
-        await setDoc(doc(db, STORAGE_COLLECTION, key), { value: valueStr, updatedAt: Date.now() });
+        await setDoc(storageDocRef(key, uid), { value: valueStr, updatedAt: Date.now() });
         return { ok:true, synced:true };
       }catch(e){
         return { ok:false, error: 'Could not save locally or to the cloud: ' + ((e&&e.message)||String(e)) };
@@ -429,14 +491,14 @@ async function saveJSON(key, value){
     }
     return { ok:false, error: 'Could not save on this device (storage full or blocked), and you appear offline.' };
   }
-  markDirty(key);
+  markDirty(uid, key);
   if(!navigator.onLine){
     updateConnectivityBanner();
     return { ok:true, synced:false };
   }
   try{
-    await setDoc(doc(db, STORAGE_COLLECTION, key), { value: valueStr, updatedAt: Date.now() });
-    clearDirty(key);
+    await setDoc(storageDocRef(key, uid), { value: valueStr, updatedAt: Date.now() });
+    clearDirty(uid, key);
     updateConnectivityBanner();
     return { ok:true, synced:true };
   }catch(e){
@@ -445,16 +507,23 @@ async function saveJSON(key, value){
     return { ok:true, synced:false, error: (e && e.message) ? e.message : String(e) };
   }
 }
+async function deleteJSON(key){
+  const uid = writeUid();
+  if(!uid) return;
+  return deleteDoc(storageDocRef(key, uid)).catch(()=>{});
+}
 // Retries every unsynced key. Called on reconnect and on a periodic timer.
 async function syncPendingWrites(){
   if(!navigator.onLine) { updateConnectivityBanner(); return; }
   const dirty = getDirtyKeys();
-  for(const key of dirty){
-    const raw = lsGet(key);
-    if(raw === null){ clearDirty(key); continue; }
+  for(const combined of dirty){
+    const sep = combined.indexOf('::');
+    const uid = combined.slice(0, sep), key = combined.slice(sep+2);
+    const raw = lsGet(uid, key);
+    if(raw === null){ clearDirty(uid, key); continue; }
     try{
-      await setDoc(doc(db, STORAGE_COLLECTION, key), { value: raw, updatedAt: Date.now() });
-      clearDirty(key);
+      await setDoc(storageDocRef(key, uid), { value: raw, updatedAt: Date.now() });
+      clearDirty(uid, key);
     }catch(e){
       console.error('background sync failed for', key, e); // will retry next pass
     }
@@ -821,24 +890,32 @@ function updateIndexSummary(){ updateIndexSummaryFor(currentGame); }
    INIT
 --------------------------------------------------------------- */
 async function init(){
+  // Shared links (?owner=...&team=...&game=... or &view=season) are a
+  // standalone read-only report for whoever the link's owner is — they
+  // load without requiring the *viewer* to sign in at all. ownerUidOverride
+  // is set by the caller before init() runs for this case (see the bottom
+  // of the file), so every loadJSON() call below transparently reads from
+  // the link owner's data tree instead of the signed-in user's.
+  const isSharedView = !!ownerUidOverride;
+
   teams = await loadJSON('teams', []);
   activeTeamId = await loadJSON('active-team-id', null);
 
-  if(teams.length === 0){
+  if(teams.length === 0 && !isSharedView){
     // First run: create a default team so the app always has something selected.
     const t = { id: 'team_' + Date.now(), name: 'My Team' };
     teams = [t];
     activeTeamId = t.id;
     await saveJSON('teams', teams);
     await saveJSON('active-team-id', activeTeamId);
-  } else if(!activeTeamId || !teams.find(t => t.id === activeTeamId)){
+  } else if((!activeTeamId || !teams.find(t => t.id === activeTeamId)) && teams.length){
     activeTeamId = teams[0].id;
-    await saveJSON('active-team-id', activeTeamId);
+    if(!isSharedView) await saveJSON('active-team-id', activeTeamId);
   }
 
-  // Shared links (?team=...&game=... or ?team=...&view=season) override which
-  // team/tab loads for THIS pageview only — never persisted as your own
-  // preference, so opening someone's shared link doesn't hijack your app.
+  // ?team=...&game=... or ?team=...&view=season override which team/tab
+  // loads for THIS pageview only — never persisted as your own preference,
+  // so opening someone's shared link doesn't hijack your own app state.
   const params = new URLSearchParams(window.location.search);
   const urlTeam = params.get('team');
   const urlGame = params.get('game');
@@ -847,12 +924,11 @@ async function init(){
 
   await loadTeamData();
   if(currentGame) activeTab = 'live';
-  updateConnectivityBanner();
-  syncPendingWrites(); // catch up on anything left unsynced from a previous offline session
 
   // A shared link is a standalone read-only report: no tabs, no team
-  // switcher, no roster/history chrome — just the requested content.
-  if(urlGame || urlView === 'season'){
+  // switcher, no roster/history chrome, no sync loop (nothing to sync as
+  // an unauthenticated viewer) — just the requested content.
+  if(isSharedView){
     const topbarEl = document.querySelector('.topbar');
     const tabsEl = document.getElementById('tabs');
     if(topbarEl) topbarEl.style.display = 'none';
@@ -866,9 +942,12 @@ async function init(){
     return;
   }
 
+  updateConnectivityBanner();
+  syncPendingWrites(); // catch up on anything left unsynced from a previous offline session
   bindTabs();
   bindTeamSwitcher();
   renderTeamSelector();
+  renderUserBadge();
   render();
 }
 
@@ -1241,12 +1320,6 @@ function buildBoxScore(g){
   const playerRows = roster.players.map(p => {
     const s = g.stats[p.id]; if(!s) return null;
     const pts = QUARTERS.reduce((sum,q)=>sum+playerPoints(s[q]),0);
-    const fgm2 = QUARTERS.reduce((sum,q)=>sum+s[q].fgm2,0);
-    const fga2 = QUARTERS.reduce((sum,q)=>sum+s[q].fga2,0);
-    const fgm3 = QUARTERS.reduce((sum,q)=>sum+s[q].fgm3,0);
-    const fga3 = QUARTERS.reduce((sum,q)=>sum+s[q].fga3,0);
-    const ftm = QUARTERS.reduce((sum,q)=>sum+s[q].ftm,0);
-    const fta = QUARTERS.reduce((sum,q)=>sum+s[q].fta,0);
     const oreb = QUARTERS.reduce((sum,q)=>sum+s[q].oreb,0);
     const dreb = QUARTERS.reduce((sum,q)=>sum+s[q].dreb,0);
     const stl = QUARTERS.reduce((sum,q)=>sum+(s[q].stl||0),0);
@@ -1255,24 +1328,21 @@ function buildBoxScore(g){
     const fouls = QUARTERS.reduce((sum,q)=>sum+s[q].fouls,0);
     const sec = QUARTERS.reduce((sum,q)=>sum+s[q].seconds,0);
     const plusMinus = QUARTERS.reduce((sum,q)=>sum+(s[q].plusMinus||0),0);
-    const fgm = fgm2+fgm3, fga = fga2+fga3;
-    return { name:p.name, pts, fgm, fga, fgm2, fga2, fgm3, fga3, ftm, fta, oreb, dreb, stl, blk, to, fouls, sec, plusMinus };
+    return { name:p.name, pts, oreb, dreb, stl, blk, to, fouls, sec, plusMinus };
   }).filter(Boolean).sort((a,b) => b.pts - a.pts); // descending by points
 
-  const rows = playerRows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.fgm}/${r.fga}</td><td>${pct(r.fgm2,r.fga2)}%</td><td>${pct(r.fgm3,r.fga3)}%</td><td>${pct(r.ftm,r.fta)}%</td><td>${r.oreb}</td><td>${r.dreb}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td></tr>`).join('');
+  const rows = playerRows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.oreb}</td><td>${r.dreb}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td></tr>`).join('');
 
   const teamTotals = aggregateTeamStats(g, true);
   const oppTotals = aggregateTeamStats(g, false);
   const teamPts = teamTotals.fgm2*2 + teamTotals.fgm3*3 + teamTotals.ftm;
   const oppPts = oppTotals.fgm2*2 + oppTotals.fgm3*3 + oppTotals.ftm;
-  const teamFgm = teamTotals.fgm2+teamTotals.fgm3, teamFga = teamTotals.fga2+teamTotals.fga3;
-  const oppFgm = oppTotals.fgm2+oppTotals.fgm3, oppFga = oppTotals.fga2+oppTotals.fga3;
   const totalsRows = `
     <tr style="font-weight:700; border-top:2px solid var(--wood);">
-      <td>${escapeHtml(currentTeamName())} Total</td><td>${teamPts}</td><td>${teamFgm}/${teamFga}</td><td>${pct(teamTotals.fgm2,teamTotals.fga2)}%</td><td>${pct(teamTotals.fgm3,teamTotals.fga3)}%</td><td>${pct(teamTotals.ftm,teamTotals.fta)}%</td><td>${teamTotals.oreb}</td><td>${teamTotals.dreb}</td><td>${teamTotals.stl}</td><td>${teamTotals.blk}</td><td>${teamTotals.to}</td><td>${teamTotals.fouls}</td><td>—</td><td>—</td>
+      <td>${escapeHtml(currentTeamName())} Total</td><td>${teamPts}</td><td>${teamTotals.oreb}</td><td>${teamTotals.dreb}</td><td>${teamTotals.stl}</td><td>${teamTotals.blk}</td><td>${teamTotals.to}</td><td>${teamTotals.fouls}</td><td>—</td><td>—</td>
     </tr>
     <tr style="font-weight:700;">
-      <td>${escapeHtml(g.opponent||'Opponent')} Total</td><td>${oppPts}</td><td>${oppFgm}/${oppFga}</td><td>${pct(oppTotals.fgm2,oppTotals.fga2)}%</td><td>${pct(oppTotals.fgm3,oppTotals.fga3)}%</td><td>${pct(oppTotals.ftm,oppTotals.fta)}%</td><td>${oppTotals.oreb}</td><td>${oppTotals.dreb}</td><td>${oppTotals.stl}</td><td>${oppTotals.blk}</td><td>${oppTotals.to}</td><td>${oppTotals.fouls}</td><td>—</td><td>—</td>
+      <td>${escapeHtml(g.opponent||'Opponent')} Total</td><td>${oppPts}</td><td>${oppTotals.oreb}</td><td>${oppTotals.dreb}</td><td>${oppTotals.stl}</td><td>${oppTotals.blk}</td><td>${oppTotals.to}</td><td>${oppTotals.fouls}</td><td>—</td><td>—</td>
     </tr>`;
   return { rows, totalsRows };
 }
@@ -1318,7 +1388,7 @@ async function renderSharedGame(gameId){
   <div class="card">
     <h2>Box score — sorted by points</h2>
     <div class="table-wrap"><table>
-      <tr><th>Player</th><th>PTS</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
+      <tr><th>Player</th><th>PTS</th><th>OREB</th><th>DREB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
       ${rows}
       ${totalsRows}
     </table></div>
@@ -1353,7 +1423,7 @@ async function renderGameDetail(gameId){
     ${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
     <div class="section-label">Box score — sorted by points</div>
     <div class="table-wrap"><table>
-      <tr><th>Player</th><th>PTS</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
+      <tr><th>Player</th><th>PTS</th><th>OREB</th><th>DREB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
       ${rows}
       ${totalsRows}
     </table></div>
@@ -1430,7 +1500,7 @@ async function renderGameDetail(gameId){
   });
   document.getElementById('deleteGameBtn').onclick = async () => {
     if(!confirm('Delete this game permanently? This cannot be undone.')) return;
-    await deleteDoc(doc(db, STORAGE_COLLECTION, gameKey(g.id))).catch(()=>{});
+    await deleteJSON(gameKey(g.id));
     gamesIndex = gamesIndex.filter(x => x.id !== g.id);
     await persistGamesIndex();
     delete gameCache[g.id];
@@ -1572,11 +1642,11 @@ function attachHandlers(){
     if(teams.length <= 1){ alert('You need at least one team.'); return; }
     if(!confirm(`Delete ${currentTeamName()} and all its games? This can't be undone.`)) return;
     const idToDelete = activeTeamId;
-    await Promise.all(gamesIndex.map(g => deleteDoc(doc(db, STORAGE_COLLECTION, gameKey(g.id))).catch(()=>{})));
+    await Promise.all(gamesIndex.map(g => deleteJSON(gameKey(g.id))));
     await Promise.all([
-      deleteDoc(doc(db, STORAGE_COLLECTION, teamKey('roster'))).catch(()=>{}),
-      deleteDoc(doc(db, STORAGE_COLLECTION, teamKey('games-index'))).catch(()=>{}),
-      deleteDoc(doc(db, STORAGE_COLLECTION, teamKey('active-game-id'))).catch(()=>{})
+      deleteJSON(teamKey('roster')),
+      deleteJSON(teamKey('games-index')),
+      deleteJSON(teamKey('active-game-id'))
     ]);
     teams = teams.filter(t => t.id !== idToDelete);
     await saveJSON('teams', teams);
@@ -1908,6 +1978,10 @@ function updateClockDisplayOnly(){
 function buildShareUrl(extraParams){
   const url = new URL(window.location.href);
   url.search = '';
+  // Every share link carries the owner's uid so a signed-out (or
+  // differently-signed-in) visitor's read targets the right data tree —
+  // see ownerUidOverride / readUid() in the storage helpers above.
+  url.searchParams.set('owner', writeUid() || '');
   Object.entries(extraParams).forEach(([k,v]) => url.searchParams.set(k, v));
   return url.toString();
 }
@@ -1925,6 +1999,24 @@ async function shareLink(url, title){
 function escapeHtml(str){ return (str??'').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(str){ return escapeHtml(str); }
 
+/* ---------------------------------------------------------------
+   AUTH — Google sign-in gates the whole app except shared read-only
+   links, which never require the viewer to have an account.
+--------------------------------------------------------------- */
+function showAuthGate(){ document.getElementById('authGate').classList.remove('hide'); }
+function hideAuthGate(){ document.getElementById('authGate').classList.add('hide'); }
+function renderUserBadge(){
+  const el = document.getElementById('userBadge');
+  if(!el || !currentUser) return;
+  el.innerHTML = `${currentUser.photoURL ? `<img src="${escapeAttr(currentUser.photoURL)}" alt="">` : ''}<button class="signout-btn" id="signOutBtn">Sign out</button>`;
+  const btn = document.getElementById('signOutBtn');
+  if(btn) btn.onclick = () => signOut(auth);
+}
+document.getElementById('googleSignInBtn').addEventListener('click', async () => {
+  try{ await signInWithPopup(auth, googleProvider); }
+  catch(e){ console.error('sign-in failed', e); alert('Sign-in failed: ' + ((e&&e.message)||String(e))); }
+});
+
 // Mobile browsers report vh/dvh inconsistently (address bar height varies by
 // browser and changes as it hides/shows), so the landscape Live layout is
 // driven off this measured value instead — it always matches the real
@@ -1936,7 +2028,32 @@ setAppViewportHeight();
 window.addEventListener('resize', setAppViewportHeight);
 window.addEventListener('orientationchange', () => setTimeout(setAppViewportHeight, 150));
 
-init();
+/* ---------------------------------------------------------------
+   BOOTSTRAP
+--------------------------------------------------------------- */
+const bootParams = new URLSearchParams(window.location.search);
+const bootOwner = bootParams.get('owner');
+const bootIsSharedView = !!(bootOwner && (bootParams.get('game') || bootParams.get('view') === 'season'));
+
+if(bootIsSharedView){
+  // Shared read-only report (game or season link) — the viewer never signs
+  // in; the link's owner uid is used for reads only, writes stay disabled.
+  ownerUidOverride = bootOwner;
+  hideAuthGate();
+  init();
+} else {
+  // Everything else requires the visitor to be signed in as themselves.
+  onAuthStateChanged(auth, (user) => {
+    if(user){
+      currentUser = user;
+      hideAuthGate();
+      init();
+    } else {
+      currentUser = null;
+      showAuthGate();
+    }
+  });
+}
 </script>
 </body>
 </html>
