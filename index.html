@@ -395,7 +395,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getFirestore, doc, getDoc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 /* ---------------------------------------------------------------
    STORAGE HELPERS — Firestore as the source of truth, with a
@@ -2121,13 +2121,28 @@ function renderUserBadge(){
   if(btn) btn.onclick = () => signOut(auth);
 }
 document.getElementById('googleSignInBtn').addEventListener('click', async () => {
-  // Redirect (not popup) sign-in: Safari's tracking prevention blocks the
-  // background storage handshake signInWithPopup needs to hand the result
-  // back to this tab, so the popup silently closes without completing.
-  // A full-page redirect avoids that entirely and is also just more
-  // reliable on mobile Safari in general, which is where this app lives.
-  try{ await signInWithRedirect(auth, googleProvider); }
-  catch(e){ console.error('sign-in failed', e); alert('Sign-in failed: ' + ((e&&e.message)||String(e))); }
+  // Popup first: it avoids the multi-domain redirect chain (yoursite ->
+  // accounts.google.com -> firebaseapp.com/__/auth/handler -> yoursite)
+  // that Chrome's Bounce Tracking Mitigation and similar storage-
+  // partitioning features can silently break mid-flow, especially on
+  // desktop. Fall back to a full-page redirect only when the popup itself
+  // can't be shown at all — mainly mobile Safari, where tracking
+  // prevention blocks popups outright.
+  try{
+    await signInWithPopup(auth, googleProvider);
+    // onAuthStateChanged below picks up the successful sign-in from here.
+  }catch(e){
+    if(e?.code === 'auth/popup-closed-by-user' || e?.code === 'auth/cancelled-popup-request'){
+      return; // the person just backed out — not a real error
+    }
+    if(e?.code === 'auth/popup-blocked' || e?.code === 'auth/operation-not-supported-in-this-environment'){
+      try{ await signInWithRedirect(auth, googleProvider); }
+      catch(e2){ console.error('sign-in failed', e2); alert('Sign-in failed: ' + ((e2&&e2.message)||String(e2))); }
+      return;
+    }
+    console.error('sign-in failed', e);
+    alert('Sign-in failed: ' + ((e&&e.message)||String(e)));
+  }
 });
 
 // Mobile browsers report vh/dvh inconsistently (address bar height varies by
@@ -2156,10 +2171,9 @@ if(bootIsSharedView){
   init();
 } else {
   // Everything else requires the visitor to be signed in as themselves.
-  // getRedirectResult surfaces any error from the signInWithRedirect flow
-  // above (e.g. the popup-era "account exists with different credential"
-  // case); onAuthStateChanged below is what actually drives init() once
-  // Firebase has resolved the redirect internally.
+  // getRedirectResult surfaces any error from the signInWithRedirect
+  // fallback above; onAuthStateChanged below is what actually drives
+  // init() once Firebase resolves either that redirect or a popup sign-in.
   getRedirectResult(auth).catch(e => console.error('redirect sign-in failed', e));
   onAuthStateChanged(auth, (user) => {
     if(user){
