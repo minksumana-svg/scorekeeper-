@@ -220,6 +220,12 @@
   th[data-sort]{cursor:pointer; user-select:none; white-space:nowrap;}
   th[data-sort].sorted{color:var(--accent);}
   th[data-sort]:active{opacity:0.6;}
+  .view-locked *{ pointer-events:none !important; }
+  .view-locked .btn, .view-locked button, .view-locked select, .view-locked input{ opacity:0.4; }
+  .view-only-note{
+    background:#2e2118; border:1px solid var(--wood-light); color:var(--paper);
+    padding:0.6rem 0.9rem; font-size:0.8rem; border-radius:10px; margin-bottom:0.9rem;
+  }
 
   html{-webkit-text-size-adjust:100%; text-size-adjust:100%;} /* prevents Safari auto-inflating text on rotation, which was fighting our compact landscape sizing */
 
@@ -388,13 +394,14 @@
   <button data-tab="live">Live Game</button>
   <button data-tab="history">History</button>
   <button data-tab="season">Season Stats</button>
+  <button data-tab="sharing">Sharing</button>
 </nav>
 
 <main id="app"></main>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore, doc, getDoc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection, query, where, getDocs, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 /* ---------------------------------------------------------------
@@ -434,7 +441,24 @@ function readUid(){ return ownerUidOverride || (currentUser && currentUser.uid);
 // The uid we're allowed to write as — always the signed-in user, NEVER the
 // override, so a shared-link visitor can never write into someone else's data.
 function writeUid(){ return currentUser && currentUser.uid; }
-function storageDocRef(key, uid){ return doc(db, 'users', uid, 'storage', key); }
+// Every key EXCEPT 'active-team-id' belongs to a team, and already embeds
+// that team's id in its own string (teamKey/gameKey build these): 'roster:TEAMID',
+// 'games-index:TEAMID', 'active-game-id:TEAMID', 'game:TEAMID:GAMEID'. Routing
+// off the key itself (rather than the module-level activeTeamId) means this
+// still resolves correctly for a background sync after switching teams, or
+// for a read-only shared link that never sets activeTeamId at all.
+// 'active-team-id' is the one genuinely personal, per-device preference —
+// which team you last had open — so it stays under the signed-in user's own
+// tree, access-controlled by uid rather than team membership.
+function storageDocRef(key, uid){
+  if(key === 'active-team-id'){
+    return doc(db, 'users', uid, 'storage', key);
+  }
+  const parts = key.split(':');
+  const teamId = parts[1];
+  const dataKey = parts[0] === 'game' ? 'game:' + parts.slice(2).join(':') : parts[0];
+  return doc(db, 'teams', teamId, 'data', dataKey);
+}
 
 const LS_PREFIX = 'sk_cache_';
 const LS_DIRTY_KEY = 'sk_dirty_keys';
@@ -607,6 +631,141 @@ function currentTeamName(){
 function teamKey(base){ return base + ':' + activeTeamId; }
 function gameKey(gameId){ return 'game:' + activeTeamId + ':' + gameId; }
 
+/* ---------------------------------------------------------------
+   TEAM MEMBERSHIP — the `teams` Firestore collection is the source of
+   truth for who can access a team, replacing the old per-user private
+   team list. A team doc looks like:
+     { name, ownerUid, memberUids:[uid,...], memberInfo:{uid:{email,name}},
+       { name, ownerUid, memberUids:[uid,...], roles:{uid:'edit'|'view'},
+       memberInfo:{uid:{email,name}}, inviteCodeEdit, inviteCodeView, createdAt }
+--------------------------------------------------------------- */
+function genInviteCode(){
+  return Math.random().toString(36).slice(2,8).toUpperCase();
+}
+// Owner always has full edit rights; everyone else's level comes from roles{}.
+function roleForTeam(team){
+  if(!team || !currentUser) return null;
+  if(team.ownerUid === currentUser.uid) return 'owner';
+  return (team.roles||{})[currentUser.uid] || null;
+}
+function canEditActiveTeam(){
+  const team = teams.find(t => t.id === activeTeamId);
+  const role = roleForTeam(team);
+  return role === 'owner' || role === 'edit';
+}
+// Every team the signed-in user belongs to (owner, edit, or view-only).
+// One-time self-repair for team docs created before roles/dual-invite-codes
+// existed — backfills the missing fields in place so old and new teams
+// both work without a manual migration step. Safe to call repeatedly.
+async function ensureTeamShape(team){
+  const patch = {};
+  if(!team.roles) patch.roles = {};
+  if(!team.inviteCodeEdit) patch.inviteCodeEdit = genInviteCode();
+  if(!team.inviteCodeView) patch.inviteCodeView = genInviteCode();
+  if(Object.keys(patch).length === 0) return team;
+  try{
+    await updateDoc(doc(db,'teams',team.id), patch);
+  }catch(e){
+    console.error('could not backfill team shape (likely a view-only member, harmless)', team.id, e);
+  }
+  return { ...team, ...patch };
+}
+async function loadMyTeams(){
+  const uid = writeUid();
+  if(!uid) return [];
+  try{
+    const q = query(collection(db,'teams'), where('memberUids','array-contains', uid));
+    const snap = await getDocs(q);
+    const raw = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    return Promise.all(raw.map(ensureTeamShape));
+  }catch(e){
+    console.error('failed to load teams', e);
+    return [];
+  }
+}
+// Every team the signed-in user OWNS — used by the Sharing tab, since only
+// an owner manages that team's access.
+async function loadTeamsIOwn(){
+  const uid = writeUid();
+  if(!uid) return [];
+  try{
+    const q = query(collection(db,'teams'), where('ownerUid', '==', uid));
+    const snap = await getDocs(q);
+    const raw = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    return Promise.all(raw.map(ensureTeamShape));
+  }catch(e){
+    console.error('failed to load owned teams', e);
+    return [];
+  }
+}
+async function createTeamDoc(name){
+  const uid = writeUid();
+  const ref = doc(collection(db,'teams'));
+  const data = {
+    name, ownerUid: uid, memberUids: [uid], roles: {},
+    memberInfo: { [uid]: { email: currentUser?.email || '', name: currentUser?.displayName || '' } },
+    inviteCodeEdit: genInviteCode(), inviteCodeView: genInviteCode(), createdAt: Date.now()
+  };
+  await setDoc(ref, data);
+  return { id: ref.id, ...data };
+}
+async function renameTeamDoc(teamId, name){
+  return updateDoc(doc(db,'teams',teamId), { name });
+}
+async function deleteTeamDoc(teamId){
+  return deleteDoc(doc(db,'teams',teamId));
+}
+// Adds the signed-in visitor to a team via an invite link's id+code. The
+// role is determined by WHICH secret code was used (edit vs. view), never
+// by a client-supplied role param, so a view link can't be edited into an
+// edit link.
+async function joinTeamByInvite(teamId, code){
+  const uid = writeUid();
+  if(!uid) return { ok:false, error:'Not signed in.' };
+  try{
+    const ref = doc(db,'teams',teamId);
+    const snap = await getDoc(ref);
+    if(!snap.exists()) return { ok:false, error:'This invite link is no longer valid.' };
+    const team = snap.data();
+    let role = null;
+    if(code === team.inviteCodeEdit) role = 'edit';
+    else if(code === team.inviteCodeView) role = 'view';
+    if(!role) return { ok:false, error:'This invite link is no longer valid.' };
+    if(uid === team.ownerUid){
+      return { ok:true, teamId, teamName: team.name, role:'owner' }; // already the owner, nothing to change
+    }
+    await updateDoc(ref, {
+      memberUids: arrayUnion(uid),
+      [`roles.${uid}`]: role,
+      [`memberInfo.${uid}`]: { email: currentUser?.email || '', name: currentUser?.displayName || '' }
+    });
+    return { ok:true, teamId, teamName: team.name, role };
+  }catch(e){
+    return { ok:false, error: (e&&e.message)||String(e) };
+  }
+}
+// Changes an existing member's role between edit and view (owner-only action).
+async function setMemberRole(teamId, uid, role){
+  return updateDoc(doc(db,'teams',teamId), { [`roles.${uid}`]: role });
+}
+// Removes a member (not the owner) from a team — used by the owner to
+// revoke someone's access.
+async function removeMemberFromTeam(teamId, uid){
+  const ref = doc(db,'teams',teamId);
+  const snap = await getDoc(ref);
+  if(!snap.exists()) return { ok:false, error:'Team not found.' };
+  const team = snap.data();
+  if(uid === team.ownerUid) return { ok:false, error:"Can't remove the team owner." };
+  const memberUids = (team.memberUids||[]).filter(id => id !== uid);
+  const memberInfo = { ...(team.memberInfo||{}) };
+  delete memberInfo[uid];
+  const roles = { ...(team.roles||{}) };
+  delete roles[uid];
+  await updateDoc(ref, { memberUids, memberInfo, roles });
+  return { ok:true };
+}
+
+
 const emptyQuarterStat = () => ({ fgm2:0, fga2:0, fgm3:0, fga3:0, ftm:0, fta:0, oreb:0, dreb:0, to:0, fouls:0, blk:0, stl:0, plusMinus:0, seconds:0 });
 const QUARTERS = ['q1','q2','q3','q4','ot'];
 const QLABELS = {q1:'Q1', q2:'Q2', q3:'Q3', q4:'Q4', ot:'OT'};
@@ -648,11 +807,11 @@ function applyPlayEffect(game, play, sign){
 }
 // Renders the play-by-play list. `game` may be currentGame (live) or a
 // loaded game object (History) — editingPlayId is shared module state.
-function playLogHtml(game){
+function playLogHtml(game, readOnly){
   const plays = [...(game.playLog||[])].reverse(); // most recent first
   if(plays.length === 0) return `<div class="empty" style="padding:0.8rem;">No plays recorded yet.</div>`;
   return `<div class="play-log">${plays.map(play => {
-    if(editingPlayId === play.id){
+    if(!readOnly && editingPlayId === play.id){
       const playerOptions = [`<option value="OPPONENT" ${play.playerId==='OPPONENT'?'selected':''}>${escapeHtml(game.opponent||'Opponent')} (team)</option>`]
         .concat(roster.players.map(p=>`<option value="${escapeAttr(p.id)}" ${play.playerId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`)).join('');
       const fieldOptions = FIELD_ORDER.map(f=>`<option value="${f}" ${play.field===f?'selected':''}>${FIELD_LABELS[f]}</option>`).join('');
@@ -678,10 +837,10 @@ function playLogHtml(game){
         <span class="play-player">${escapeHtml(play.playerName)}</span>
         <span class="play-action">${FIELD_LABELS[play.field]||play.field}</span>
       </div>
-      <div class="play-actions">
+      ${readOnly ? '' : `<div class="play-actions">
         <button class="icon-btn" style="color:var(--wood-light);" data-edit-play="${play.id}" aria-label="Edit play">✎</button>
         <button class="icon-btn" data-delete-play="${play.id}" aria-label="Delete play">✕</button>
-      </div>
+      </div>`}
     </div>`;
   }).join('')}</div>`;
 }
@@ -909,45 +1068,18 @@ function updateIndexSummary(){ updateIndexSummaryFor(currentGame); }
    INIT
 --------------------------------------------------------------- */
 async function init(){
-  // Shared links (?owner=...&team=...&game=... or &view=season) are a
-  // standalone read-only report for whoever the link's owner is — they
-  // load without requiring the *viewer* to sign in at all. ownerUidOverride
-  // is set by the caller before init() runs for this case (see the bottom
-  // of the file), so every loadJSON() call below transparently reads from
-  // the link owner's data tree instead of the signed-in user's.
-  const isSharedView = !!ownerUidOverride;
-
-  teams = await loadJSON('teams', []);
-  activeTeamId = await loadJSON('active-team-id', null);
-
-  if(teams.length === 0 && !isSharedView){
-    // First run: create a default team so the app always has something selected.
-    const t = { id: 'team_' + Date.now(), name: 'My Team' };
-    teams = [t];
-    activeTeamId = t.id;
-    await saveJSON('teams', teams);
-    await saveJSON('active-team-id', activeTeamId);
-  } else if((!activeTeamId || !teams.find(t => t.id === activeTeamId)) && teams.length){
-    activeTeamId = teams[0].id;
-    if(!isSharedView) await saveJSON('active-team-id', activeTeamId);
-  }
-
-  // ?team=...&game=... or ?team=...&view=season override which team/tab
-  // loads for THIS pageview only — never persisted as your own preference,
-  // so opening someone's shared link doesn't hijack your own app state.
   const params = new URLSearchParams(window.location.search);
   const urlTeam = params.get('team');
   const urlGame = params.get('game');
   const urlView = params.get('view');
-  if(urlTeam && teams.find(t => t.id === urlTeam)) activeTeamId = urlTeam;
+  const isSharedView = !!(urlGame || urlView === 'season');
 
-  await loadTeamData();
-  if(currentGame) activeTab = 'live';
-
-  // A shared link is a standalone read-only report: no tabs, no team
-  // switcher, no roster/history chrome, no sync loop (nothing to sync as
-  // an unauthenticated viewer) — just the requested content.
   if(isSharedView){
+    // Standalone read-only report — the viewer never signs in. Team data
+    // reads are open by Firestore rule regardless of who's asking, so all
+    // this needs is which team the link points at.
+    activeTeamId = urlTeam;
+    await loadTeamData();
     const topbarEl = document.querySelector('.topbar');
     const tabsEl = document.getElementById('tabs');
     if(topbarEl) topbarEl.style.display = 'none';
@@ -960,6 +1092,45 @@ async function init(){
     }
     return;
   }
+
+  // Everything below requires a signed-in visitor (guaranteed by the
+  // bootstrap gate at the bottom of the file before init() runs here).
+  teams = await loadMyTeams();
+
+  // A join link (?join=teamId&code=XXXXXX) adds the signed-in visitor to
+  // that team's membership before anything else loads.
+  const joinTeamId = params.get('join');
+  const joinCode = params.get('code');
+  if(joinTeamId && joinCode){
+    const res = await joinTeamByInvite(joinTeamId, joinCode);
+    if(res.ok){
+      teams = await loadMyTeams(); // refresh — we're now a member
+      activeTeamId = joinTeamId;
+      alert(`You've joined ${res.teamName}.`);
+    } else {
+      alert("Couldn't join that team: " + res.error);
+    }
+    // Strip the join params so refreshing the page doesn't re-attempt it.
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.search = '';
+    window.history.replaceState({}, '', cleanUrl.toString());
+  }
+
+  if(teams.length === 0){
+    // First run: create a default team so the app always has something selected.
+    const t = await createTeamDoc('My Team');
+    teams = [t];
+    activeTeamId = t.id;
+  } else if(!activeTeamId){
+    activeTeamId = await loadJSON('active-team-id', null);
+  }
+  if(!activeTeamId || !teams.find(t => t.id === activeTeamId)){
+    activeTeamId = teams[0].id;
+  }
+  await saveJSON('active-team-id', activeTeamId);
+
+  await loadTeamData();
+  if(currentGame) activeTab = 'live';
 
   updateConnectivityBanner();
   syncPendingWrites(); // catch up on anything left unsynced from a previous offline session
@@ -1013,19 +1184,17 @@ function bindTeamSwitcher(){
   document.getElementById('newTeamBtn').addEventListener('click', async () => {
     const name = prompt('New team name:');
     if(!name || !name.trim()) return;
-    const t = { id: 'team_' + Date.now(), name: name.trim() };
-    teams.push(t);
-    const res = await saveJSON('teams', teams);
-    if(!res.ok){
-      teams.pop();
-      alert('Could not create team: ' + res.error);
-      return;
+    try{
+      const t = await createTeamDoc(name.trim());
+      teams.push(t);
+      activeTeamId = t.id;
+      await saveJSON('active-team-id', activeTeamId);
+      renderTeamSelector();
+      await loadTeamData();
+      setTab('roster');
+    }catch(e){
+      alert('Could not create team: ' + ((e&&e.message)||String(e)));
     }
-    activeTeamId = t.id;
-    await saveJSON('active-team-id', activeTeamId);
-    renderTeamSelector();
-    await loadTeamData();
-    setTab('roster');
   });
 }
 
@@ -1052,6 +1221,7 @@ function render(){
   else if(activeTab==='live') app.innerHTML = renderLive();
   else if(activeTab==='history') app.innerHTML = renderHistory();
   else if(activeTab==='season'){ renderSeason(); return; } // manages its own async content + handler binding
+  else if(activeTab==='sharing'){ renderSharing(); return; } // manages its own async content + handler binding
   attachHandlers();
 }
 
@@ -1059,26 +1229,33 @@ function render(){
    ROSTER TAB
 --------------------------------------------------------------- */
 function renderRoster(){
+  const activeTeam = teams.find(t => t.id === activeTeamId);
+  const isOwner = activeTeam && currentUser && activeTeam.ownerUid === currentUser.uid;
+  const canEdit = canEditActiveTeam();
+  const viewOnlyBanner = canEdit ? '' : `
+  <div class="card" style="border-color:var(--wood-light);">
+    <div class="empty" style="padding:0.3rem 0;">👁️ You have view-only access to ${escapeHtml(currentTeamName())}. Ask the team owner from the Sharing tab to change your access if you need to make edits.</div>
+  </div>`;
   return `
+  ${viewOnlyBanner}
   <div class="card">
     <h2>Team name</h2>
-    <input type="text" id="teamNameInput" value="${escapeAttr(currentTeamName())}" placeholder="e.g. Storm U13">
-    <button class="btn block" id="saveTeamName">Save team name</button>
-    <span class="save-status" id="teamNameStatus"></span>
+    <input type="text" id="teamNameInput" value="${escapeAttr(currentTeamName())}" placeholder="e.g. Storm U13" ${canEdit?'':'disabled'}>
+    ${canEdit ? `<button class="btn block" id="saveTeamName">Save team name</button><span class="save-status" id="teamNameStatus"></span>` : ''}
   </div>
   <div class="card">
     <h2>Add player</h2>
     <div class="row">
       <div>
         <label>Player name</label>
-        <input type="text" id="newPlayerName" placeholder="Full name">
+        <input type="text" id="newPlayerName" placeholder="Full name" ${canEdit?'':'disabled'}>
       </div>
       <div style="max-width:90px;">
         <label>Number</label>
-        <input type="number" id="newPlayerNum" placeholder="#" min="0" max="99">
+        <input type="number" id="newPlayerNum" placeholder="#" min="0" max="99" ${canEdit?'':'disabled'}>
       </div>
     </div>
-    <button class="btn block" id="addPlayerBtn">Add to roster</button>
+    ${canEdit ? `<button class="btn block" id="addPlayerBtn">Add to roster</button>` : `<div class="empty" style="padding:0.5rem 0 0;">View-only access can't add players.</div>`}
   </div>
   <div class="card">
     <h2>Roster (${roster.players.length})</h2>
@@ -1093,14 +1270,14 @@ function renderRoster(){
       ` : `
         <div class="player-list-item">
           <span class="player-name"><span class="player-num">${p.number ?? '–'}</span>${escapeHtml(p.name)}</span>
-          <span>
+          ${canEdit ? `<span>
             <button class="icon-btn" style="color:var(--wood-light);" data-edit-player="${p.id}" aria-label="Edit ${escapeAttr(p.name)}">✎</button>
             <button class="icon-btn" data-remove-player="${p.id}" aria-label="Remove ${escapeAttr(p.name)}">✕</button>
-          </span>
+          </span>` : ''}
         </div>
       `).join('')}
   </div>
-  ${teams.length > 1 ? `
+  ${(teams.length > 1 && isOwner) ? `
   <div class="card">
     <h2>Delete this team</h2>
     <div class="empty" style="padding:0.3rem 0 0.8rem;">Permanently removes ${escapeHtml(currentTeamName())}, its roster, and all its games. This can't be undone.</div>
@@ -1150,6 +1327,7 @@ function renderLive(){
   }
 
   const g = currentGame;
+  const canEdit = canEditActiveTeam();
   const q = g.currentQuarter;
   const hs = homeScore(g), as = awayScore(g);
   const remaining = g.quarterRemaining[q];
@@ -1246,6 +1424,8 @@ function renderLive(){
 
   return teamPicker + `
   <div class="live-screen live-screen-main">
+    ${canEdit ? '' : `<div class="view-only-note">👁️ You have view-only access to this game — watch live, but recording is locked to editors.</div>`}
+    <div class="${canEdit ? '' : 'view-locked'}">
     <div class="storage-banner ${lastSaveIssue ? 'show' : ''} ${lastSaveIssue==='offline' ? 'info' : ''}" id="liveSaveWarning">${
       lastSaveIssue === 'error' ? "⚠️ Could not save this update anywhere — check your device storage. Keep playing, but write the score down as backup." :
       lastSaveIssue === 'offline' ? "📴 Offline — this is saved safely on your device and will sync automatically once you're back online." : ''
@@ -1274,13 +1454,14 @@ function renderLive(){
     </div>
 
     <div class="card">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
-        <div class="quarter-tabs" style="flex:1 1 auto;">${quarterTabs}</div>
-        <button class="btn secondary" id="openBoxScoreBtn" style="flex-shrink:0;">📊 Box score</button>
-      </div>
+      <div class="quarter-tabs">${quarterTabs}</div>
     </div>
 
     ${statsPanelHtml}
+    </div>
+    <div class="card">
+      <button class="btn secondary block" id="openBoxScoreBtn">📊 Box score</button>
+    </div>
   </div>
 
   <div class="live-screen live-screen-progression">
@@ -1306,7 +1487,7 @@ function renderLive(){
         <h2>Play-by-play (${(g.playLog||[]).length})</h2>
         <button class="btn secondary" id="togglePlayLogBtn" style="padding:0.35rem 0.7rem; font-size:0.75rem; flex-shrink:0;">${playLogExpanded ? 'Collapse' : 'Expand'}</button>
       </div>
-      ${playLogExpanded ? playLogHtml(g) : ''}
+      ${playLogExpanded ? playLogHtml(g, !canEditActiveTeam()) : ''}
     </div>
   </div>
 
@@ -1493,6 +1674,7 @@ async function renderGameDetail(gameId){
     if(box) box.innerHTML = `<div class="card"><div class="empty"><span class="ball">🏀</span>That game link doesn't match any saved game for this team.</div></div>`;
     return;
   }
+  const canEdit = canEditActiveTeam();
   const { rows, totalsRows } = buildBoxScore(g);
   const { quarterTable, prefix, usTag, oppTag } = buildQuarterTable(g);
 
@@ -1502,8 +1684,8 @@ async function renderGameDetail(gameId){
     <h2>${escapeHtml(currentTeamName())} ${prefix} ${escapeHtml(g.opponent||'Opponent')} — ${g.date||''}</h2>
     <div style="display:flex; gap:0.5rem; margin-bottom:0.9rem; flex-wrap:wrap;">
       <button class="btn secondary" id="shareGameBtn">🔗 Share game</button>
-      <button class="btn secondary" id="toggleExcludeBtn">${g.excludeFromSeason ? 'Include in season stats' : 'Exclude from season stats'}</button>
-      <button class="btn danger" id="deleteGameBtn">Delete game</button>
+      ${canEdit ? `<button class="btn secondary" id="toggleExcludeBtn">${g.excludeFromSeason ? 'Include in season stats' : 'Exclude from season stats'}</button>
+      <button class="btn danger" id="deleteGameBtn">Delete game</button>` : ''}
     </div>
     <div class="section-label">Score by quarter</div>
     <div class="table-wrap"><table><tr><th>Qtr</th><th>${escapeHtml(currentTeamName())} (${usTag})</th><th>${escapeHtml(g.opponent||'Opp')} (${oppTag})</th></tr>${quarterTable}
@@ -1523,7 +1705,7 @@ async function renderGameDetail(gameId){
       <span>Play-by-play (${(g.playLog||[]).length})</span>
       <button class="btn secondary" id="togglePlayLogBtn" style="padding:0.25rem 0.6rem; font-size:0.7rem;">${playLogExpanded ? 'Collapse' : 'Expand'}</button>
     </div>
-    ${playLogExpanded ? playLogHtml(g) : ''}
+    ${playLogExpanded ? playLogHtml(g, !canEdit) : ''}
   </div>`;
 
   document.getElementById('togglePlayLogBtn').onclick = () => { playLogExpanded = !playLogExpanded; renderGameDetail(g.id); };
@@ -1531,7 +1713,8 @@ async function renderGameDetail(gameId){
     const url = buildShareUrl({ team: activeTeamId, game: g.id });
     shareLink(url, `${currentTeamName()} ${prefix} ${g.opponent||'Opponent'} — ${g.date||''}`);
   };
-  document.getElementById('toggleExcludeBtn').onclick = async () => {
+  const toggleExcludeBtn = document.getElementById('toggleExcludeBtn');
+  if(toggleExcludeBtn) toggleExcludeBtn.onclick = async () => {
     g.excludeFromSeason = !g.excludeFromSeason;
     const res = await saveJSON(gameKey(g.id), g);
     gameCache[g.id] = g;
@@ -1590,7 +1773,8 @@ async function renderGameDetail(gameId){
       renderGameDetail(g.id);
     };
   });
-  document.getElementById('deleteGameBtn').onclick = async () => {
+  const deleteGameBtn = document.getElementById('deleteGameBtn');
+  if(deleteGameBtn) deleteGameBtn.onclick = async () => {
     if(!confirm('Delete this game permanently? This cannot be undone.')) return;
     await deleteJSON(gameKey(g.id));
     gamesIndex = gamesIndex.filter(x => x.id !== g.id);
@@ -1607,6 +1791,90 @@ async function renderGameDetail(gameId){
     render();
   };
   document.getElementById('closeDetail').onclick = () => { document.getElementById('gameDetail').innerHTML=''; };
+}
+
+/* ---------------------------------------------------------------
+   SHARING TAB — account-level access management. Shows every team the
+   signed-in user OWNS (not just has access to), since only an owner
+   manages who else can see or edit that team.
+--------------------------------------------------------------- */
+async function renderSharing(){
+  const app = document.getElementById('app');
+  app.innerHTML = `<div class="card"><div class="empty">Loading your teams…</div></div>`;
+  const owned = await loadTeamsIOwn();
+
+  if(owned.length === 0){
+    app.innerHTML = `<div class="card"><div class="empty"><span class="ball">🏀</span>You don't own any teams yet. Sharing access is managed by whoever created a team.</div></div>`;
+    return;
+  }
+
+  app.innerHTML = owned.map(team => {
+    const memberUids = (team.memberUids||[]).filter(uid => uid !== team.ownerUid);
+    const rows = [
+      // Owner row first, always.
+      `<div class="player-list-item">
+        <span class="player-name">${escapeHtml((team.memberInfo||{})[team.ownerUid]?.name || (team.memberInfo||{})[team.ownerUid]?.email || 'You')}
+          <span class="pill" style="background:var(--wood); color:var(--ink);">Owner</span>
+        </span>
+      </div>`,
+      ...memberUids.map(uid => {
+        const info = (team.memberInfo||{})[uid] || {};
+        const label = info.name || info.email || uid.slice(0,8);
+        const role = (team.roles||{})[uid] || 'view';
+        return `<div class="player-list-item" data-member-row="${escapeAttr(uid)}" data-team-id="${escapeAttr(team.id)}">
+          <span class="player-name">${escapeHtml(label)}</span>
+          <span style="display:flex; align-items:center; gap:0.4rem;">
+            <select class="role-select" data-set-role="${escapeAttr(uid)}" data-team-id="${escapeAttr(team.id)}" style="width:auto; margin:0; padding:0.3rem 0.5rem; font-size:0.75rem;">
+              <option value="edit" ${role==='edit'?'selected':''}>Can edit</option>
+              <option value="view" ${role==='view'?'selected':''}>View only</option>
+            </select>
+            <button class="icon-btn" data-remove-member="${escapeAttr(uid)}" data-team-id="${escapeAttr(team.id)}" aria-label="Remove ${escapeAttr(label)}">✕</button>
+          </span>
+        </div>`;
+      })
+    ];
+    return `
+    <div class="card">
+      <h2>${escapeHtml(team.name)}</h2>
+      <div class="row">
+        <button class="btn secondary" data-invite="${escapeAttr(team.id)}" data-role="edit">🔗 Invite — can edit</button>
+        <button class="btn secondary" data-invite="${escapeAttr(team.id)}" data-role="view">🔗 Invite — view only</button>
+      </div>
+      <div class="section-label" style="margin-top:0.9rem;">Has access (${memberUids.length + 1})</div>
+      ${rows.join('')}
+    </div>`;
+  }).join('');
+
+  // Invite buttons — generate the right link for edit vs. view access.
+  document.querySelectorAll('[data-invite]').forEach(btn => {
+    btn.onclick = async () => {
+      const teamId = btn.dataset.invite;
+      const role = btn.dataset.role;
+      const team = owned.find(t => t.id === teamId);
+      if(!team) return;
+      const code = role === 'edit' ? team.inviteCodeEdit : team.inviteCodeView;
+      const url = buildShareUrl({ join: teamId, code });
+      shareLink(url, `Join ${team.name} on Courtside (${role === 'edit' ? 'edit access' : 'view only'})`);
+    };
+  });
+  // Change an existing member's role.
+  document.querySelectorAll('[data-set-role]').forEach(sel => {
+    sel.onchange = async () => {
+      const res = await setMemberRole(sel.dataset.teamId, sel.dataset.setRole, sel.value);
+      if(!res){ /* updateDoc resolves undefined on success — nothing to check */ }
+      if(sel.dataset.teamId === activeTeamId) teams = await loadMyTeams(); // refresh in case it's the active team
+    };
+  });
+  // Remove a member entirely.
+  document.querySelectorAll('[data-remove-member]').forEach(btn => {
+    btn.onclick = async () => {
+      if(!confirm('Remove this person\'s access to the team?')) return;
+      const res = await removeMemberFromTeam(btn.dataset.teamId, btn.dataset.removeMember);
+      if(!res.ok){ alert('Could not remove: ' + res.error); return; }
+      if(btn.dataset.teamId === activeTeamId) teams = await loadMyTeams();
+      renderSharing();
+    };
+  });
 }
 
 /* ---------------------------------------------------------------
@@ -1722,13 +1990,14 @@ function attachHandlers(){
     const team = teams.find(t => t.id === activeTeamId);
     const prevName = team.name;
     team.name = newName;
-    const res = await saveJSON('teams', teams);
-    if(res.ok){
+    try{
+      await renameTeamDoc(activeTeamId, newName);
       renderTeamSelector();
-    } else {
+      flashStatus('teamNameStatus', { ok:true });
+    }catch(e){
       team.name = prevName; // don't pretend it saved
+      flashStatus('teamNameStatus', { ok:false, error: (e&&e.message)||String(e) });
     }
-    flashStatus('teamNameStatus', res);
   };
   const deleteTeamBtn = document.getElementById('deleteTeamBtn');
   if(deleteTeamBtn) deleteTeamBtn.onclick = async () => {
@@ -1741,8 +2010,9 @@ function attachHandlers(){
       deleteJSON(teamKey('games-index')),
       deleteJSON(teamKey('active-game-id'))
     ]);
-    teams = teams.filter(t => t.id !== idToDelete);
-    await saveJSON('teams', teams);
+    try{ await deleteTeamDoc(idToDelete); }catch(e){ /* rules may block a non-owner — team list refresh below reflects reality either way */ }
+    teams = await loadMyTeams();
+    if(teams.length === 0) teams = [await createTeamDoc('My Team')];
     activeTeamId = teams[0].id;
     await saveJSON('active-team-id', activeTeamId);
     renderTeamSelector();
@@ -1826,7 +2096,7 @@ function attachHandlers(){
   // Live: quarter tabs
   document.querySelectorAll('[data-quarter]').forEach(btn => {
     btn.onclick = () => {
-      if(!currentGame) return;
+      if(!currentGame || !canEditActiveTeam()) return;
       pauseClock();
       currentGame.currentQuarter = btn.dataset.quarter;
       queueSaveGame();
@@ -1837,6 +2107,7 @@ function attachHandlers(){
   // Live: clock toggle
   const clockToggle = document.getElementById('clockToggle');
   if(clockToggle) clockToggle.onclick = () => {
+    if(!canEditActiveTeam()) return;
     if(currentGame.clockRunning) pauseClock(); else startClock();
     render();
   };
@@ -1844,6 +2115,7 @@ function attachHandlers(){
   // Live: manually correct the quarter clock (timing mismatches happen) — tap the clock itself
   const clockDisplayWrap = document.getElementById('clockDisplayWrap');
   if(clockDisplayWrap) clockDisplayWrap.onclick = () => {
+    if(!canEditActiveTeam()) return;
     if(currentGame.clockRunning) pauseClock();
     const q = currentGame.currentQuarter;
     const input = prompt(`Set the ${QLABELS[q]} clock (MM:SS):`, fmtClock(currentGame.quarterRemaining[q]));
@@ -1891,6 +2163,7 @@ function attachHandlers(){
   document.querySelectorAll('[data-sub-out]').forEach(btn => {
     btn.onclick = (e) => {
       e.stopPropagation();
+      if(!canEditActiveTeam()) return;
       const pid = btn.dataset.subOut;
       currentGame.onCourt = currentGame.onCourt.filter(id => id !== pid);
       if(selectedPlayerId === pid) selectedPlayerId = null;
@@ -1902,6 +2175,7 @@ function attachHandlers(){
   // Live: sub a player in (blocked once 5 are already on court)
   document.querySelectorAll('[data-sub-in]').forEach(btn => {
     btn.onclick = () => {
+      if(!canEditActiveTeam()) return;
       if(currentGame.onCourt.length >= 5){
         alert('Court is full — sub a player out first.');
         return;
@@ -1916,7 +2190,7 @@ function attachHandlers(){
   // and record it as an editable/deletable play-by-play entry.
   document.querySelectorAll('[data-field]').forEach(btn => {
     btn.onclick = () => {
-      if(!selectedPlayerId) return;
+      if(!selectedPlayerId || !canEditActiveTeam()) return;
       const isOppSel = selectedPlayerId === 'OPPONENT';
       const playerName = isOppSel ? (currentGame.opponent || 'Opponent') : (roster.players.find(p=>p.id===selectedPlayerId)?.name || 'Player');
       const play = {
@@ -1940,6 +2214,7 @@ function attachHandlers(){
   // Live: quick undo — reverses the most recent play for whoever is selected
   const undoLastPlayBtn = document.getElementById('undoLastPlayBtn');
   if(undoLastPlayBtn) undoLastPlayBtn.onclick = () => {
+    if(!canEditActiveTeam()) return;
     const log = currentGame.playLog || [];
     let idx = -1;
     for(let i = log.length - 1; i >= 0; i--){
@@ -1995,6 +2270,7 @@ function attachHandlers(){
   // Live: end game
   const endBtn = document.getElementById('endGameBtn');
   if(endBtn) endBtn.onclick = async () => {
+    if(!canEditActiveTeam()) return;
     if(!confirm('End this game? Final stats will be saved to season history.')) return;
     pauseClock();
     currentGame.final = true;
@@ -2086,10 +2362,8 @@ function updateClockDisplayOnly(){
 function buildShareUrl(extraParams){
   const url = new URL(window.location.href);
   url.search = '';
-  // Every share link carries the owner's uid so a signed-out (or
-  // differently-signed-in) visitor's read targets the right data tree —
-  // see ownerUidOverride / readUid() in the storage helpers above.
-  url.searchParams.set('owner', writeUid() || '');
+  // Team data reads are open by Firestore rule, so a share link only needs
+  // to say which team/game it's pointing at — no owner identity required.
   Object.entries(extraParams).forEach(([k,v]) => url.searchParams.set(k, v));
   return url.toString();
 }
@@ -2160,13 +2434,14 @@ window.addEventListener('orientationchange', () => setTimeout(setAppViewportHeig
    BOOTSTRAP
 --------------------------------------------------------------- */
 const bootParams = new URLSearchParams(window.location.search);
-const bootOwner = bootParams.get('owner');
-const bootIsSharedView = !!(bootOwner && (bootParams.get('game') || bootParams.get('view') === 'season'));
+const bootIsSharedView = !!(bootParams.get('game') || bootParams.get('view') === 'season');
 
 if(bootIsSharedView){
   // Shared read-only report (game or season link) — the viewer never signs
-  // in; the link's owner uid is used for reads only, writes stay disabled.
-  ownerUidOverride = bootOwner;
+  // in. Team data reads are open by Firestore rule regardless of who's
+  // asking, so no owner identity is needed here at all — ownerUidOverride
+  // just needs to be truthy to pass the "attempt this read" gate below.
+  ownerUidOverride = true;
   hideAuthGate();
   init();
 } else {
