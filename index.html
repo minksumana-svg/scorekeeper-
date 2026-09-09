@@ -193,6 +193,15 @@
   .legend-dot{display:inline-block; width:0.6rem; height:0.6rem; border-radius:50%; background:var(--accent);}
   .legend-dot.away{background:var(--away-accent);}
 
+  .combo-chart{display:flex; flex-direction:column; gap:0.3rem; margin:0.5rem 0;}
+  .combo-row{
+    display:grid; grid-template-columns:minmax(46px,auto) 2.6rem 1fr 2.6rem;
+    align-items:center; gap:0.5rem;
+    padding:0.35rem 0; border-bottom:1px solid var(--court-line);
+  }
+  .combo-row:last-child{border-bottom:none;}
+  .combo-cat{font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--wood-light); font-weight:700;}
+
   .play-log{display:flex; flex-direction:column; gap:0.4rem; max-height:420px; overflow-y:auto;}
   .play-row{
     display:flex; align-items:center; justify-content:space-between; gap:0.5rem;
@@ -342,16 +351,12 @@
     .score-line-svg{ width:auto !important; max-width:100%; max-height:calc(var(--app-vh, 100vh) * 0.75); margin:0 auto; }
     .live-screen-progression .bar-legend{ font-size:0.72rem; justify-content:center; flex-wrap:wrap; text-align:center; }
 
-    /* Comparison screen: chart next to the table instead of stacked */
-    .live-comparison-flex{
-      display:flex; gap:1rem; align-items:flex-start; flex:1; min-height:0;
-    }
-    .live-comparison-flex > div{ flex:1; min-width:0; }
-    .live-comparison-flex table{ font-size:0.78rem; }
-    .live-comparison-flex th, .live-comparison-flex td{ padding:0.3rem 0.25rem; }
-    .live-screen-comparison .bar-chart{ gap:0.45rem; }
-    .live-screen-comparison .bar-cat{ font-size:0.7rem; margin-bottom:0.15rem; }
-    .live-screen-comparison .bar-track{ height:0.8rem; }
+    /* Comparison screen: one aligned row per category, sized for a short viewport */
+    .live-screen-comparison .combo-chart{ gap:0.2rem; }
+    .live-screen-comparison .combo-row{ padding:0.25rem 0; grid-template-columns:minmax(40px,auto) 2.2rem 1fr 2.2rem; gap:0.35rem; }
+    .live-screen-comparison .combo-cat{ font-size:0.6rem; }
+    .live-screen-comparison .bar-split-val{ font-size:0.62rem; width:2.2rem; }
+    .live-screen-comparison .bar-track.split{ height:0.7rem; }
 
     /* Box-score popup: same idea as the comparison table, just smaller */
     .modal-card{ padding:0.7rem; max-height:82vh; }
@@ -982,6 +987,30 @@ function comparisonBarChartHtml(game, usName, oppName){
   return `<div class="bar-chart">${bars}</div>
   <div class="bar-legend"><span class="legend-dot home"></span>${escapeHtml(usName)} &nbsp; <span class="legend-dot away"></span>${escapeHtml(oppName)}</div>`;
 }
+// One-column version for the Live Game screen: category label and its bar
+// sit on the SAME row, so there's no separate table next to a separate
+// chart repeating the category names a second time.
+function comparisonCombinedHtml(game, usName, oppName){
+  const rows = comparisonRows(game);
+  const lines = rows.map(([label,hv,av,isPct]) => {
+    const total = hv + av;
+    const homeShare = total > 0 ? (hv/total*100) : 50;
+    const awayShare = total > 0 ? (av/total*100) : 50;
+    const suffix = isPct ? '%' : '';
+    return `
+    <div class="combo-row">
+      <div class="combo-cat">${label}</div>
+      <span class="bar-split-val home">${hv}${suffix}</span>
+      <div class="bar-track split">
+        <div class="bar-fill home" style="width:${homeShare}%;"></div>
+        <div class="bar-fill away" style="width:${awayShare}%;"></div>
+      </div>
+      <span class="bar-split-val away">${av}${suffix}</span>
+    </div>`;
+  }).join('');
+  return `<div class="combo-chart">${lines}</div>
+  <div class="bar-legend"><span class="legend-dot home"></span>${escapeHtml(usName)} &nbsp; <span class="legend-dot away"></span>${escapeHtml(oppName)}</div>`;
+}
 // Whether a quarter has any recorded activity — always true for Q1-Q4,
 // conditional for OT so unused overtime periods don't clutter the chart.
 function quarterHasActivity(game, q){
@@ -1511,10 +1540,7 @@ function renderLive(){
   <div class="live-screen live-screen-comparison">
     <div class="card">
       <h2>Team comparison</h2>
-      <div class="live-comparison-flex">
-        <div>${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}</div>
-        <div>${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}</div>
-      </div>
+      ${comparisonCombinedHtml(g, currentTeamName(), g.opponent||'Opponent')}
     </div>
   </div>
 
