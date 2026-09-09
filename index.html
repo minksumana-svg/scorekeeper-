@@ -620,6 +620,31 @@ let playLogExpanded = false; // whether the play-by-play list is expanded
 let lastSaveIssue = null; // null | 'offline' | 'error' — drives the live-game save banner across re-renders
 let boxScoreOpen = false; // whether the sortable box-score popup is showing
 let boxScoreSort = 'pts'; // which column the popup is currently sorted by
+// Roster ordering — a per-device preference (not team data), so it's kept
+// in localStorage and reused everywhere a player list is shown: the Roster
+// tab itself, and the on-court/bench lists in Live Game.
+let rosterSortBy = 'number';
+try{ rosterSortBy = localStorage.getItem('sk_roster_sort') || 'number'; }catch(e){}
+function sortedRosterPlayers(){
+  const list = [...roster.players];
+  if(rosterSortBy === 'name'){
+    list.sort((a,b) => a.name.localeCompare(b.name, undefined, { sensitivity:'base' }));
+  } else {
+    // Number: unnumbered players sort to the end rather than to 0.
+    list.sort((a,b) => {
+      const an = a.number, bn = b.number;
+      if(an == null && bn == null) return a.name.localeCompare(b.name, undefined, { sensitivity:'base' });
+      if(an == null) return 1;
+      if(bn == null) return -1;
+      return an - bn;
+    });
+  }
+  return list;
+}
+function setRosterSortBy(value){
+  rosterSortBy = value;
+  try{ localStorage.setItem('sk_roster_sort', value); }catch(e){}
+}
 let activeTab = 'roster';
 let clockTimer = null;
 let saveDebounce = null;
@@ -1264,9 +1289,15 @@ function renderRoster(){
     ${canEdit ? `<button class="btn block" id="addPlayerBtn">Add to roster</button>` : `<div class="empty" style="padding:0.5rem 0 0;">View-only access can't add players.</div>`}
   </div>
   <div class="card">
-    <h2>Roster (${roster.players.length})</h2>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
+      <h2 style="margin-bottom:0;">Roster (${roster.players.length})</h2>
+      <div style="display:flex; gap:0.3rem;">
+        <button class="btn ${rosterSortBy==='number'?'':'secondary'}" data-sort-roster="number" style="padding:0.3rem 0.6rem; font-size:0.7rem;">Sort: #</button>
+        <button class="btn ${rosterSortBy==='name'?'':'secondary'}" data-sort-roster="name" style="padding:0.3rem 0.6rem; font-size:0.7rem;">Sort: Name</button>
+      </div>
+    </div>
     ${roster.players.length===0 ? `<div class="empty"><span class="ball">🏀</span>No players yet. Add your first player above.</div>` :
-      roster.players.map(p => editingPlayerId === p.id ? `
+      sortedRosterPlayers().map(p => editingPlayerId === p.id ? `
         <div class="player-list-item editing" data-player-row="${p.id}" style="align-items:center;">
           <input type="text" class="edit-player-name" value="${escapeAttr(p.name)}" style="flex:1; margin:0 0.4rem 0 0;">
           <input type="number" class="edit-player-num" value="${p.number ?? ''}" min="0" max="99" style="width:60px; margin:0 0.4rem 0 0;">
@@ -1349,8 +1380,8 @@ function renderLive(){
   if(selectedPlayerId && selectedPlayerId !== 'OPPONENT' && !g.onCourt.includes(selectedPlayerId)) selectedPlayerId = null;
   if(!selectedPlayerId && g.onCourt.length > 0) selectedPlayerId = g.onCourt[0];
 
-  const onCourtPlayers = roster.players.filter(p => g.onCourt.includes(p.id));
-  const benchPlayers = roster.players.filter(p => !g.onCourt.includes(p.id));
+  const onCourtPlayers = sortedRosterPlayers().filter(p => g.onCourt.includes(p.id));
+  const benchPlayers = sortedRosterPlayers().filter(p => !g.onCourt.includes(p.id));
 
   const courtTilesHtml = onCourtPlayers.map(p => `
     <div class="court-slot ${p.id===selectedPlayerId?'active':''}" data-select-player="${p.id}">
@@ -2025,6 +2056,9 @@ function attachHandlers(){
     await loadTeamData();
     setTab('roster');
   };
+  document.querySelectorAll('[data-sort-roster]').forEach(btn => {
+    btn.onclick = () => { setRosterSortBy(btn.dataset.sortRoster); render(); };
+  });
   const addPlayerBtn = document.getElementById('addPlayerBtn');
   if(addPlayerBtn) addPlayerBtn.onclick = async () => {
     const nameInput = document.getElementById('newPlayerName');
