@@ -195,12 +195,13 @@
 
   .combo-chart{display:flex; flex-direction:column; gap:0.3rem; margin:0.5rem 0;}
   .combo-row{
-    display:grid; grid-template-columns:minmax(46px,auto) 2.6rem 1fr 2.6rem;
+    display:grid; grid-template-columns:minmax(46px,auto) 2.6rem 2.6rem 1fr;
     align-items:center; gap:0.5rem;
     padding:0.35rem 0; border-bottom:1px solid var(--court-line);
   }
   .combo-row:last-child{border-bottom:none;}
   .combo-cat{font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--wood-light); font-weight:700;}
+  .combo-row .bar-split-val{text-align:center;}
 
   .play-log{display:flex; flex-direction:column; gap:0.4rem; max-height:420px; overflow-y:auto;}
   .play-row{
@@ -353,7 +354,7 @@
 
     /* Comparison screen: one aligned row per category, sized for a short viewport */
     .live-screen-comparison .combo-chart{ gap:0.2rem; }
-    .live-screen-comparison .combo-row{ padding:0.25rem 0; grid-template-columns:minmax(40px,auto) 2.2rem 1fr 2.2rem; gap:0.35rem; }
+    .live-screen-comparison .combo-row{ padding:0.25rem 0; grid-template-columns:minmax(40px,auto) 2.2rem 2.2rem 1fr; gap:0.35rem; }
     .live-screen-comparison .combo-cat{ font-size:0.6rem; }
     .live-screen-comparison .bar-split-val{ font-size:0.62rem; width:2.2rem; }
     .live-screen-comparison .bar-track.split{ height:0.7rem; }
@@ -1001,11 +1002,11 @@ function comparisonCombinedHtml(game, usName, oppName){
     <div class="combo-row">
       <div class="combo-cat">${label}</div>
       <span class="bar-split-val home">${hv}${suffix}</span>
+      <span class="bar-split-val away">${av}${suffix}</span>
       <div class="bar-track split">
         <div class="bar-fill home" style="width:${homeShare}%;"></div>
         <div class="bar-fill away" style="width:${awayShare}%;"></div>
       </div>
-      <span class="bar-split-val away">${av}${suffix}</span>
     </div>`;
   }).join('');
   return `<div class="combo-chart">${lines}</div>
