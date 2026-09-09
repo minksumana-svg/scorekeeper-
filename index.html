@@ -685,13 +685,19 @@ async function loadMyTeams(){
 }
 // Every team the signed-in user OWNS — used by the Sharing tab, since only
 // an owner manages that team's access.
+// Uses the SAME query shape as loadMyTeams() (memberUids array-contains
+// uid) rather than filtering by ownerUid — Firestore's security rules for
+// a `list` query must be provable directly from the query's own filters,
+// and since the rule checks memberUids (not ownerUid), a query filtered on
+// ownerUid gets rejected outright even for genuinely valid results. Same
+// underlying query, then just filter for ownership client-side.
 async function loadTeamsIOwn(){
   const uid = writeUid();
   if(!uid) return [];
   try{
-    const q = query(collection(db,'teams'), where('ownerUid', '==', uid));
+    const q = query(collection(db,'teams'), where('memberUids','array-contains', uid));
     const snap = await getDocs(q);
-    const raw = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const raw = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(t => t.ownerUid === uid);
     return Promise.all(raw.map(ensureTeamShape));
   }catch(e){
     console.error('failed to load owned teams', e);
