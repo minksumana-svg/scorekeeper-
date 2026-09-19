@@ -381,7 +381,6 @@
 <div class="storage-banner" id="storageBanner">
   ⚠️ Can't reach the database right now. Check your internet connection and that the Firestore security rules allow access — your entries won't be saved until it's reachable.
 </div>
-<div class="storage-banner info" id="trialBanner" style="display:none;"></div>
 <div class="topbar">
   <div class="brand">
     <span class="ball">🏀</span>
@@ -441,65 +440,6 @@ const storageAvailable = true;
 
 let currentUser = null;      // signed-in Firebase user, or null
 let ownerUidOverride = null; // set only while viewing someone else's shared link — read-only
-let mySubscription = null;   // { status:'trialing'|'active', trialEndsAt, createdAt } for the signed-in user
-
-const TRIAL_LENGTH_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
-
-// Loads the signed-in user's subscription record, creating a fresh 14-day
-// trial on their very first sign-in ever. The record can only ever be
-// self-created as 'trialing' — moving to 'active' requires a trusted
-// server (Phase 2's payment webhook), never the client, so there's no way
-// to self-grant a paid subscription by tampering with the browser.
-async function loadMySubscription(){
-  const uid = writeUid();
-  if(!uid) return null;
-  const ref = doc(db,'subscriptions',uid);
-  try{
-    const snap = await getDoc(ref);
-    if(snap.exists()) return snap.data();
-    const trial = { status:'trialing', trialEndsAt: Date.now() + TRIAL_LENGTH_MS, createdAt: Date.now() };
-    await setDoc(ref, trial);
-    return trial;
-  }catch(e){
-    console.error('failed to load subscription', e);
-    return null;
-  }
-}
-function isTrialActive(sub){ return !!sub && sub.status === 'trialing' && sub.trialEndsAt > Date.now(); }
-function isPaidActive(sub){ return !!sub && sub.status === 'active'; }
-// Whether the signed-in user currently has ANY write entitlement of their
-// own (paid, or still inside their trial window).
-function hasWriteEntitlement(sub){ return isPaidActive(sub) || isTrialActive(sub); }
-// Sharing (inviting anyone, edit or view) requires an actual paid
-// subscription — never available on the trial, per the plan.
-function canInviteOthers(sub){ return isPaidActive(sub); }
-// How many teams the signed-in user is allowed to OWN. Enforced here
-// client-side as the primary UX gate; the real backstop for "paid-only
-// features" (sharing) is in the Firestore rules, since a team-count cap
-// isn't something rules can cleanly enforce on their own.
-function maxOwnedTeams(sub){ return isPaidActive(sub) ? Infinity : 1; }
-function updateTrialBanner(){
-  const banner = document.getElementById('trialBanner');
-  if(!banner) return;
-  const sub = mySubscription;
-  // Only relevant if the CURRENTLY VIEWED team is one you own — someone
-  // you've merely been invited to (edit or view role) shouldn't see your
-  // own trial/subscription messaging at all; it has no bearing on them.
-  const activeTeam = teams.find(t => t.id === activeTeamId);
-  const isOwnerHere = activeTeam && currentUser && activeTeam.ownerUid === currentUser.uid;
-  if(!isOwnerHere || !sub || isPaidActive(sub)){
-    banner.style.display = 'none';
-    return;
-  }
-  if(isTrialActive(sub)){
-    const daysLeft = Math.max(1, Math.ceil((sub.trialEndsAt - Date.now()) / (24*60*60*1000)));
-    banner.textContent = `🎟️ Free trial — ${daysLeft} day${daysLeft===1?'':'s'} left. 1 team, no sharing. Subscribe for £15/year to unlock more.`;
-    banner.style.display = 'block';
-  } else {
-    banner.textContent = `🔒 Your free trial has ended — you can still view everything, but recording new stats is locked until you subscribe (£15/year).`;
-    banner.style.display = 'block';
-  }
-}
 
 // The uid whose data we're currently reading — the shared-link owner if
 // we're on a shared read-only view, otherwise the signed-in user.
@@ -742,16 +682,7 @@ function roleForTeam(team){
 function canEditActiveTeam(){
   const team = teams.find(t => t.id === activeTeamId);
   const role = roleForTeam(team);
-  if(role === 'owner'){
-    // Owner's own edit access requires their own subscription entitlement —
-    // an expired trial locks them into the same view-only experience as
-    // anyone else, until they subscribe. (Invited edit/view members keep
-    // going purely on their role for now — see loadMySubscription's
-    // comments; tying their access to the owner's entitlement too is a
-    // Phase 2 refinement once real payment status is synced server-side.)
-    return hasWriteEntitlement(mySubscription);
-  }
-  return role === 'edit';
+  return role === 'owner' || role === 'edit';
 }
 // Every team the signed-in user belongs to (owner, edit, or view-only).
 // One-time self-repair for team docs created before roles/dual-invite-codes
@@ -1225,8 +1156,6 @@ async function init(){
 
   // Everything below requires a signed-in visitor (guaranteed by the
   // bootstrap gate at the bottom of the file before init() runs here).
-  mySubscription = await loadMySubscription();
-  updateTrialBanner();
   teams = await loadMyTeams();
 
   // A join link (?join=teamId&code=XXXXXX) adds the signed-in visitor to
@@ -1308,18 +1237,12 @@ async function switchTeam(newId){
   await saveJSON('active-team-id', activeTeamId);
   await loadTeamData();
   renderTeamSelector();
-  updateTrialBanner(); // "am I the owner here" depends on which team is now active
   render();
 }
 
 function bindTeamSwitcher(){
   document.getElementById('teamSelector').addEventListener('change', (e) => switchTeam(e.target.value));
   document.getElementById('newTeamBtn').addEventListener('click', async () => {
-    const ownedCount = teams.filter(t => t.ownerUid === writeUid()).length;
-    if(ownedCount >= maxOwnedTeams(mySubscription)){
-      alert(`Your free trial is limited to 1 team. Subscribe (£15/year) to manage more than one team.`);
-      return;
-    }
     const name = prompt('New team name:');
     if(!name || !name.trim()) return;
     try{
@@ -1977,12 +1900,10 @@ async function renderSharing(){
     return `
     <div class="card">
       <h2>${escapeHtml(team.name)}</h2>
-      ${canInviteOthers(mySubscription) ? `
       <div class="row">
         <button class="btn secondary" data-invite="${escapeAttr(team.id)}" data-role="edit">🔗 Invite — can edit</button>
         <button class="btn secondary" data-invite="${escapeAttr(team.id)}" data-role="view">🔗 Invite — view only</button>
-      </div>` : `
-      <div class="empty" style="padding:0.5rem 0;">🔒 Inviting a coach or manager is a paid feature. Subscribe (£15/year) to share access to this team.</div>`}
+      </div>
       <div class="section-label" style="margin-top:0.9rem;">Has access (${memberUids.length + 1})</div>
       ${rows.join('')}
     </div>`;
