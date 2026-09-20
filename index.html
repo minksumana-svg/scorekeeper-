@@ -169,6 +169,7 @@
   @media (max-width:640px){
     .stat-grid{grid-template-columns:repeat(4,1fr);}
   }
+  .stat-grid-paused .stat-btn{ opacity:0.4; pointer-events:none; }
   .stat-btn{
     background:var(--court); border:1px solid var(--court-line); color:var(--paper);
     border-radius:8px; padding:0.45rem 0.2rem; font-size:0.72rem; font-weight:600; text-align:center; line-height:1.25;
@@ -231,6 +232,7 @@
   th[data-sort].sorted{color:var(--accent);}
   th[data-sort]:active{opacity:0.6;}
   .view-locked *{ pointer-events:none !important; }
+  .view-locked #openBoxScoreBtn{ pointer-events:auto !important; opacity:1 !important; }
   .view-locked .btn, .view-locked button, .view-locked select, .view-locked input{ opacity:0.4; }
   .view-only-note{
     background:#2e2118; border:1px solid var(--wood-light); color:var(--paper);
@@ -621,6 +623,8 @@ let currentGame = null; // full game object when on live tab
 let selectedPlayerId = null; // which on-court player (or 'OPPONENT') the panel is recording for
 let showSubPicker = false; // whether the bench picker is expanded
 let editingPlayId = null; // play-by-play entry currently being edited
+let playLogSearchText = ''; // filters the play-by-play list by player name
+let playLogSearchType = 'all'; // filters the play-by-play list by action type
 let editingPlayerId = null; // roster player currently being edited inline
 let playLogExpanded = false; // whether the play-by-play list is expanded
 let lastSaveIssue = null; // null | 'offline' | 'error' — drives the live-game save banner across re-renders
@@ -803,13 +807,13 @@ async function removeMemberFromTeam(teamId, uid){
 }
 
 
-const emptyQuarterStat = () => ({ fgm2:0, fga2:0, fgm3:0, fga3:0, ftm:0, fta:0, oreb:0, dreb:0, to:0, fouls:0, blk:0, stl:0, plusMinus:0, seconds:0 });
+const emptyQuarterStat = () => ({ fgm2:0, fga2:0, fgm3:0, fga3:0, ftm:0, fta:0, oreb:0, dreb:0, to:0, fouls:0, blk:0, stl:0, ast:0, plusMinus:0, seconds:0 });
 const QUARTERS = ['q1','q2','q3','q4','ot'];
 const QLABELS = {q1:'Q1', q2:'Q2', q3:'Q3', q4:'Q4', ot:'OT'};
 const FIELD_LABELS = {
   fgm2:'2PT Make', fga2miss:'2PT Miss', fgm3:'3PT Make', fga3miss:'3PT Miss',
   ftm:'FT Make', ftamiss:'FT Miss', oreb:'Off Reb', dreb:'Def Reb',
-  stl:'Steal', blk:'Block', to:'Turnover', fouls:'Foul'
+  ast:'Assist', stl:'Steal', blk:'Block', to:'Turnover', fouls:'Foul'
 };
 const FIELD_ORDER = Object.keys(FIELD_LABELS);
 // Applies (sign=1) or reverses (sign=-1) a play's effect on the stat sheet,
@@ -831,6 +835,7 @@ function applyPlayEffect(game, play, sign){
     case 'oreb': qs.oreb += sign; break;
     case 'dreb': qs.dreb += sign; break;
     case 'stl': qs.stl += sign; break;
+    case 'ast': qs.ast += sign; break;
     case 'blk': qs.blk += sign; break;
     case 'to': qs.to += sign; break;
     case 'fouls': qs.fouls += sign; break;
@@ -845,9 +850,28 @@ function applyPlayEffect(game, play, sign){
 // Renders the play-by-play list. `game` may be currentGame (live) or a
 // loaded game object (History) — editingPlayId is shared module state.
 function playLogHtml(game, readOnly){
-  const plays = [...(game.playLog||[])].reverse(); // most recent first
-  if(plays.length === 0) return `<div class="empty" style="padding:0.8rem;">No plays recorded yet.</div>`;
-  return `<div class="play-log">${plays.map(play => {
+  const allPlays = [...(game.playLog||[])].reverse(); // most recent first
+  if(allPlays.length === 0) return `<div class="empty" style="padding:0.8rem;">No plays recorded yet.</div>`;
+
+  const searchLower = playLogSearchText.trim().toLowerCase();
+  const plays = allPlays.filter(play => {
+    if(play.id === editingPlayId) return true; // never hide a row mid-edit
+    const nameMatch = !searchLower || play.playerName.toLowerCase().includes(searchLower);
+    const typeMatch = playLogSearchType === 'all' || play.field === playLogSearchType;
+    return nameMatch && typeMatch;
+  });
+
+  const typeOptions = [`<option value="all">All types</option>`]
+    .concat(FIELD_ORDER.map(f => `<option value="${f}" ${playLogSearchType===f?'selected':''}>${FIELD_LABELS[f]}</option>`)).join('');
+  const searchBar = `
+  <div class="row" style="margin-bottom:0.6rem;">
+    <input type="text" id="playLogSearchInput" placeholder="Search by player name…" value="${escapeAttr(playLogSearchText)}">
+    <select id="playLogSearchType" style="max-width:150px;">${typeOptions}</select>
+  </div>`;
+
+  const rowsHtml = plays.length === 0
+    ? `<div class="empty" style="padding:0.8rem;">No plays match that search.</div>`
+    : plays.map(play => {
     if(!readOnly && editingPlayId === play.id){
       const playerOptions = [`<option value="OPPONENT" ${play.playerId==='OPPONENT'?'selected':''}>${escapeHtml(game.opponent||'Opponent')} (team)</option>`]
         .concat(roster.players.map(p=>`<option value="${escapeAttr(p.id)}" ${play.playerId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`)).join('');
@@ -879,7 +903,9 @@ function playLogHtml(game, readOnly){
         <button class="icon-btn" data-delete-play="${play.id}" aria-label="Delete play">✕</button>
       </div>`}
     </div>`;
-  }).join('')}</div>`;
+  }).join('');
+
+  return searchBar + `<div class="play-log">${rowsHtml}</div>`;
 }
 
 function newGame(opponent, date, homeAway, quarterMinutes, otMinutes){
@@ -923,11 +949,11 @@ function awayScore(game){
 // the home-vs-away comparison table. statsSource is either a per-player map
 // (home) or a per-quarter map (opponent); pass which kind via isPerPlayer.
 function aggregateTeamStats(game, isHome){
-  const totals = { fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0,oreb:0,dreb:0,to:0,fouls:0,blk:0,stl:0 };
+  const totals = { fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0,oreb:0,dreb:0,to:0,fouls:0,blk:0,stl:0,ast:0 };
   const addQ = (qs) => {
     totals.fgm2+=qs.fgm2; totals.fga2+=qs.fga2; totals.fgm3+=qs.fgm3; totals.fga3+=qs.fga3;
     totals.ftm+=qs.ftm; totals.fta+=qs.fta; totals.oreb+=qs.oreb; totals.dreb+=qs.dreb;
-    totals.to+=qs.to; totals.fouls+=qs.fouls; totals.blk+=(qs.blk||0); totals.stl+=(qs.stl||0);
+    totals.to+=qs.to; totals.fouls+=qs.fouls; totals.blk+=(qs.blk||0); totals.stl+=(qs.stl||0); totals.ast+=(qs.ast||0);
   };
   if(isHome){
     Object.values(game.stats).forEach(s => QUARTERS.forEach(q => addQ(s[q])));
@@ -946,6 +972,7 @@ function comparisonRows(game){
     ['REB', h.oreb+h.dreb, a.oreb+a.dreb, false],
     ['OREB', h.oreb, a.oreb, false],
     ['DREB', h.dreb, a.dreb, false],
+    ['AST', h.ast, a.ast, false],
     ['STL', h.stl, a.stl, false],
     ['BLK', h.blk, a.blk, false],
     ['TO', h.to, a.to, false],
@@ -1213,7 +1240,7 @@ async function loadTeamData(){
   gamesIndex = gamesIndexRes;
   activeGameId = activeGameIdRes;
   currentGame = null;
-  selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null;
+  selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null; playLogSearchText = ''; playLogSearchType = 'all';
   boxScoreOpen = false; boxScoreSort = 'pts';
   editingPlayerId = null;
   if(activeGameId){
@@ -1284,6 +1311,23 @@ function render(){
   else if(activeTab==='season'){ renderSeason(); return; } // manages its own async content + handler binding
   else if(activeTab==='sharing'){ renderSharing(); return; } // manages its own async content + handler binding
   attachHandlers();
+}
+// Re-renders while preserving focus + cursor position on whichever input
+// triggered it — needed for the play-log search box, since a full render()
+// otherwise recreates the input element and kicks focus out after every
+// keystroke.
+function renderPreservingFocus(renderFn){
+  const active = document.activeElement;
+  const activeId = active && active.id;
+  const selStart = active && typeof active.selectionStart === 'number' ? active.selectionStart : null;
+  renderFn();
+  if(activeId){
+    const el = document.getElementById(activeId);
+    if(el){
+      el.focus();
+      if(selStart !== null && el.setSelectionRange) el.setSelectionRange(selStart, selStart);
+    }
+  }
 }
 
 /* ---------------------------------------------------------------
@@ -1412,6 +1456,7 @@ function renderLive(){
 
   const onCourtPlayers = sortedRosterPlayers().filter(p => g.onCourt.includes(p.id));
   const benchPlayers = sortedRosterPlayers().filter(p => !g.onCourt.includes(p.id));
+  const courtCountOK = onCourtPlayers.length === 5; // stats can only be recorded with exactly 5 on court
 
   const courtTilesHtml = onCourtPlayers.map(p => `
     <div class="court-slot ${p.id===selectedPlayerId?'active':''}" data-select-player="${p.id}">
@@ -1452,7 +1497,7 @@ function renderLive(){
     <div class="live-panel-grid">
       <div class="live-col-court">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.6rem; flex-wrap:wrap; gap:0.5rem;">
-          <h2>On court (${onCourtPlayers.length}/5)</h2>
+          <h2 style="${courtCountOK ? '' : 'color:var(--miss);'}">On court (${onCourtPlayers.length}/5)</h2>
           <button class="btn secondary" id="subToggleBtn">🔁 ${showSubPicker ? 'Hide bench' : 'Substitute'}</button>
         </div>
         ${subPickerHtml}
@@ -1471,7 +1516,8 @@ function renderLive(){
           <span class="pc-pts">${playerPoints(selQs)} PTS (${QLABELS[q]})</span>
           ${isOpp ? '' : `<span>Q time ${fmtClock(selQs.seconds)}</span><span>Game time ${fmtClock(totalPlayerStat(selPlayer.id,'seconds'))}</span><span>${totalPlayerStat(selPlayer.id,'plusMinus')>=0?'+':''}${totalPlayerStat(selPlayer.id,'plusMinus')} +/-</span>`}
         </div>
-        <div class="stat-grid">
+        ${!courtCountOK ? `<div class="empty" style="padding:0.5rem 0; color:var(--miss); text-align:left;">⚠️ Need exactly 5 players on court to record stats (currently ${onCourtPlayers.length}). Stat buttons are paused until it's fixed.</div>` : ''}
+        <div class="stat-grid ${courtCountOK ? '' : 'stat-grid-paused'}">
           <button class="stat-btn make" data-field="fgm2">2PT Make<span class="n">${selQs.fgm2}/${selQs.fga2}</span></button>
           <button class="stat-btn miss" data-field="fga2miss">2PT Miss<span class="n">${selQs.fga2-selQs.fgm2}</span></button>
           <button class="stat-btn make" data-field="fgm3">3PT Make<span class="n">${selQs.fgm3}/${selQs.fga3}</span></button>
@@ -1480,6 +1526,8 @@ function renderLive(){
           <button class="stat-btn miss" data-field="ftamiss">FT Miss<span class="n">${selQs.fta-selQs.ftm}</span></button>
           <button class="stat-btn other" data-field="oreb">Off Reb<span class="n">${selQs.oreb}</span></button>
           <button class="stat-btn other" data-field="dreb">Def Reb<span class="n">${selQs.dreb}</span></button>
+          <button class="stat-btn other" data-field="ast">Assist<span class="n">${selQs.ast}</span></button>
+          <button class="btn secondary" id="openBoxScoreBtn" style="height:100%;">📊 Box score</button>
           <button class="stat-btn other" data-field="stl">Steal<span class="n">${selQs.stl}</span></button>
           <button class="stat-btn other" data-field="blk">Block<span class="n">${selQs.blk}</span></button>
           <button class="stat-btn other" data-field="to">Turnover<span class="n">${selQs.to}</span></button>
@@ -1525,9 +1573,6 @@ function renderLive(){
     </div>
 
     ${statsPanelHtml}
-    </div>
-    <div class="card">
-      <button class="btn secondary block" id="openBoxScoreBtn">📊 Box score</button>
     </div>
   </div>
 
@@ -1600,6 +1645,7 @@ function computePlayerBoxRows(g){
     const dreb = QUARTERS.reduce((sum,q)=>sum+s[q].dreb,0);
     const stl = QUARTERS.reduce((sum,q)=>sum+(s[q].stl||0),0);
     const blk = QUARTERS.reduce((sum,q)=>sum+(s[q].blk||0),0);
+    const ast = QUARTERS.reduce((sum,q)=>sum+(s[q].ast||0),0);
     const to = QUARTERS.reduce((sum,q)=>sum+s[q].to,0);
     const fouls = QUARTERS.reduce((sum,q)=>sum+s[q].fouls,0);
     const sec = QUARTERS.reduce((sum,q)=>sum+s[q].seconds,0);
@@ -1608,7 +1654,7 @@ function computePlayerBoxRows(g){
     return {
       id:p.id, name:p.name, pts, fgm, fga, fgm2, fga2, fgm3, fga3, ftm, fta,
       fg2pct: pct(fgm2,fga2), fg3pct: pct(fgm3,fga3), ftpct: pct(ftm,fta),
-      oreb, dreb, stl, blk, to, fouls, sec, plusMinus
+      oreb, dreb, ast, stl, blk, to, fouls, sec, plusMinus
     };
   }).filter(Boolean);
 }
@@ -1617,7 +1663,7 @@ function computePlayerBoxRows(g){
 function buildBoxScore(g){
   const playerRows = computePlayerBoxRows(g).sort((a,b) => b.pts - a.pts); // descending by points
 
-  const rows = playerRows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.fgm}/${r.fga}</td><td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td><td>${r.oreb}</td><td>${r.dreb}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td></tr>`).join('');
+  const rows = playerRows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.fgm}/${r.fga}</td><td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td><td>${r.oreb}</td><td>${r.dreb}</td><td>${r.ast}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td></tr>`).join('');
 
   const teamTotals = aggregateTeamStats(g, true);
   const oppTotals = aggregateTeamStats(g, false);
@@ -1627,10 +1673,10 @@ function buildBoxScore(g){
   const oppFgm = oppTotals.fgm2+oppTotals.fgm3, oppFga = oppTotals.fga2+oppTotals.fga3;
   const totalsRows = `
     <tr style="font-weight:700; border-top:2px solid var(--wood);">
-      <td>${escapeHtml(currentTeamName())} Total</td><td>${teamPts}</td><td>${teamFgm}/${teamFga}</td><td>${pct(teamTotals.fgm2,teamTotals.fga2)}%</td><td>${pct(teamTotals.fgm3,teamTotals.fga3)}%</td><td>${pct(teamTotals.ftm,teamTotals.fta)}%</td><td>${teamTotals.oreb}</td><td>${teamTotals.dreb}</td><td>${teamTotals.stl}</td><td>${teamTotals.blk}</td><td>${teamTotals.to}</td><td>${teamTotals.fouls}</td><td>—</td><td>—</td>
+      <td>${escapeHtml(currentTeamName())} Total</td><td>${teamPts}</td><td>${teamFgm}/${teamFga}</td><td>${pct(teamTotals.fgm2,teamTotals.fga2)}%</td><td>${pct(teamTotals.fgm3,teamTotals.fga3)}%</td><td>${pct(teamTotals.ftm,teamTotals.fta)}%</td><td>${teamTotals.oreb}</td><td>${teamTotals.dreb}</td><td>${teamTotals.ast}</td><td>${teamTotals.stl}</td><td>${teamTotals.blk}</td><td>${teamTotals.to}</td><td>${teamTotals.fouls}</td><td>—</td><td>—</td>
     </tr>
     <tr style="font-weight:700;">
-      <td>${escapeHtml(g.opponent||'Opponent')} Total</td><td>${oppPts}</td><td>${oppFgm}/${oppFga}</td><td>${pct(oppTotals.fgm2,oppTotals.fga2)}%</td><td>${pct(oppTotals.fgm3,oppTotals.fga3)}%</td><td>${pct(oppTotals.ftm,oppTotals.fta)}%</td><td>${oppTotals.oreb}</td><td>${oppTotals.dreb}</td><td>${oppTotals.stl}</td><td>${oppTotals.blk}</td><td>${oppTotals.to}</td><td>${oppTotals.fouls}</td><td>—</td><td>—</td>
+      <td>${escapeHtml(g.opponent||'Opponent')} Total</td><td>${oppPts}</td><td>${oppFgm}/${oppFga}</td><td>${pct(oppTotals.fgm2,oppTotals.fga2)}%</td><td>${pct(oppTotals.fgm3,oppTotals.fga3)}%</td><td>${pct(oppTotals.ftm,oppTotals.fta)}%</td><td>${oppTotals.oreb}</td><td>${oppTotals.dreb}</td><td>${oppTotals.ast}</td><td>${oppTotals.stl}</td><td>${oppTotals.blk}</td><td>${oppTotals.to}</td><td>${oppTotals.fouls}</td><td>—</td><td>—</td>
     </tr>`;
   return { rows, totalsRows };
 }
@@ -1644,6 +1690,7 @@ const BOX_MODAL_COLUMNS = [
   { key:'ftpct', label:'FT%' },
   { key:'oreb', label:'OREB' },
   { key:'dreb', label:'DREB' },
+  { key:'ast', label:'AST' },
   { key:'stl', label:'STL' },
   { key:'blk', label:'BLK' },
   { key:'to', label:'TO' },
@@ -1663,7 +1710,7 @@ function boxScoreModalHtml(g){
   const bodyRows = rows.map(r => `<tr>
     <td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.fgm}/${r.fga}</td>
     <td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td>
-    <td>${r.oreb}</td><td>${r.dreb}</td><td>${r.stl}</td><td>${r.blk}</td>
+    <td>${r.oreb}</td><td>${r.dreb}</td><td>${r.ast}</td><td>${r.stl}</td><td>${r.blk}</td>
     <td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td>
     <td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td>
   </tr>`).join('');
@@ -1677,7 +1724,7 @@ function boxScoreModalHtml(g){
       <div class="table-wrap">
         <table>
           <tr>${headerCells}</tr>
-          ${bodyRows || `<tr><td colspan="14" style="text-align:center; color:var(--paper-dim); padding:1rem;">No players yet</td></tr>`}
+          ${bodyRows || `<tr><td colspan="15" style="text-align:center; color:var(--paper-dim); padding:1rem;">No players yet</td></tr>`}
         </table>
       </div>
     </div>
@@ -1725,7 +1772,7 @@ async function renderSharedGame(gameId){
   <div class="card">
     <h2>Box score — sorted by points</h2>
     <div class="table-wrap"><table>
-      <tr><th>Player</th><th>PTS</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
+      <tr><th>Player</th><th>PTS</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>AST</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
       ${rows}
       ${totalsRows}
     </table></div>
@@ -1745,7 +1792,7 @@ async function renderGameDetail(gameId){
   box.innerHTML = `
   <div class="card">
     <button class="backlink" id="closeDetail">← Back to schedule</button>
-    <h2>${escapeHtml(currentTeamName())} ${prefix} ${escapeHtml(g.opponent||'Opponent')} — ${g.date||''}</h2>
+    <h2>${escapeHtml(currentTeamName())} ${prefix} ${escapeHtml(g.opponent||'Opponent')} — ${g.date||''} ${canEdit ? `<button class="icon-btn" id="editOpponentBtn" style="color:var(--wood-light); font-size:0.9rem; vertical-align:middle;" aria-label="Edit opponent name">✎</button>` : ''}</h2>
     <div style="display:flex; gap:0.5rem; margin-bottom:0.9rem; flex-wrap:wrap;">
       <button class="btn secondary" id="shareGameBtn">🔗 Share game</button>
       ${canEdit ? `<button class="btn secondary" id="toggleExcludeBtn">${g.excludeFromSeason ? 'Include in season stats' : 'Exclude from season stats'}</button>
@@ -1761,7 +1808,7 @@ async function renderGameDetail(gameId){
     ${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
     <div class="section-label">Box score — sorted by points</div>
     <div class="table-wrap"><table>
-      <tr><th>Player</th><th>PTS</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
+      <tr><th>Player</th><th>PTS</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>AST</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
       ${rows}
       ${totalsRows}
     </table></div>
@@ -1773,9 +1820,25 @@ async function renderGameDetail(gameId){
   </div>`;
 
   document.getElementById('togglePlayLogBtn').onclick = () => { playLogExpanded = !playLogExpanded; renderGameDetail(g.id); };
+  const playLogSearchInputH = document.getElementById('playLogSearchInput');
+  if(playLogSearchInputH) playLogSearchInputH.oninput = () => { playLogSearchText = playLogSearchInputH.value; renderPreservingFocus(() => renderGameDetail(g.id)); };
+  const playLogSearchTypeSelH = document.getElementById('playLogSearchType');
+  if(playLogSearchTypeSelH) playLogSearchTypeSelH.onchange = () => { playLogSearchType = playLogSearchTypeSelH.value; renderGameDetail(g.id); };
   document.getElementById('shareGameBtn').onclick = () => {
     const url = buildShareUrl({ team: activeTeamId, game: g.id });
     shareLink(url, `${currentTeamName()} ${prefix} ${g.opponent||'Opponent'} — ${g.date||''}`);
+  };
+  const editOpponentBtn = document.getElementById('editOpponentBtn');
+  if(editOpponentBtn) editOpponentBtn.onclick = async () => {
+    const newName = prompt('Opponent name:', g.opponent || '');
+    if(newName === null) return; // cancelled
+    const trimmed = newName.trim();
+    if(!trimmed || trimmed === g.opponent) return;
+    g.opponent = trimmed;
+    await saveJSON(gameKey(g.id), g);
+    const idxEntry = gamesIndex.find(entry => entry.id === g.id);
+    if(idxEntry){ idxEntry.opponent = trimmed; await persistGamesIndex(); }
+    renderGameDetail(g.id);
   };
   const toggleExcludeBtn = document.getElementById('toggleExcludeBtn');
   if(toggleExcludeBtn) toggleExcludeBtn.onclick = async () => {
@@ -1846,7 +1909,7 @@ async function renderGameDetail(gameId){
     delete gameCache[g.id];
     if(currentGame?.id === g.id){
       currentGame = null;
-      selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null;
+      selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null; playLogSearchText = ''; playLogSearchType = 'all';
   boxScoreOpen = false; boxScoreSort = 'pts';
       activeGameId = null;
       await saveJSON(teamKey('active-game-id'), null);
@@ -1952,7 +2015,7 @@ async function renderSeason(){
   const loaded = await Promise.all(gamesIndex.map(g => loadGame(g.id)));
   const allGames = loaded.filter(g => g && !g.excludeFromSeason);
   const totals = {};
-  roster.players.forEach(p => totals[p.id] = { pts:0, oreb:0, dreb:0, stl:0, blk:0, to:0, fouls:0, seconds:0, fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0, plusMinus:0, games:new Set() });
+  roster.players.forEach(p => totals[p.id] = { pts:0, oreb:0, dreb:0, ast:0, stl:0, blk:0, to:0, fouls:0, seconds:0, fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0, plusMinus:0, games:new Set() });
   allGames.forEach(g => {
     Object.entries(g.stats).forEach(([pid, s]) => {
       if(!totals[pid]) return;
@@ -1961,7 +2024,7 @@ async function renderSeason(){
         const qs = s[q];
         totals[pid].pts += playerPoints(qs);
         totals[pid].oreb += qs.oreb; totals[pid].dreb += qs.dreb;
-        totals[pid].stl += (qs.stl||0); totals[pid].blk += (qs.blk||0);
+        totals[pid].stl += (qs.stl||0); totals[pid].blk += (qs.blk||0); totals[pid].ast += (qs.ast||0);
         totals[pid].to += qs.to; totals[pid].fouls += qs.fouls;
         totals[pid].seconds += qs.seconds;
         totals[pid].fgm2 += qs.fgm2; totals[pid].fga2 += qs.fga2;
@@ -1987,14 +2050,14 @@ async function renderSeason(){
     const mpg = gp ? fmtClock(Math.round(t.seconds/gp)) : '00:00';
     return `<tr>
       <td>${escapeHtml(p.name)}</td><td>${gp}</td><td>${t.pts}</td><td>${ppg}</td>
-      <td>${t.oreb+t.dreb}</td><td>${t.stl}</td><td>${t.blk}</td><td>${t.to}</td><td>${t.fouls}</td>
+      <td>${t.oreb+t.dreb}</td><td>${t.ast}</td><td>${t.stl}</td><td>${t.blk}</td><td>${t.to}</td><td>${t.fouls}</td>
       <td>${fg2pct}%</td><td>${fg3pct}%</td><td>${ftpct}%</td><td>${mpg}</td><td>${t.plusMinus>=0?'+':''}${t.plusMinus}</td>
     </tr>`;
   }).join('');
 
   // Season-wide team vs. all-opponents aggregate, same shape as a single game's totals rows.
-  const seasonTeam = { fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0,oreb:0,dreb:0,stl:0,blk:0,to:0,fouls:0 };
-  const seasonOpp = { fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0,oreb:0,dreb:0,stl:0,blk:0,to:0,fouls:0 };
+  const seasonTeam = { fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0,oreb:0,dreb:0,ast:0,stl:0,blk:0,to:0,fouls:0 };
+  const seasonOpp = { fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0,oreb:0,dreb:0,ast:0,stl:0,blk:0,to:0,fouls:0 };
   allGames.forEach(g => {
     const ht = aggregateTeamStats(g, true), ot = aggregateTeamStats(g, false);
     Object.keys(seasonTeam).forEach(k => { seasonTeam[k] += ht[k]; seasonOpp[k] += ot[k]; });
@@ -2005,12 +2068,12 @@ async function renderSeason(){
   const seasonSummaryRows = gpAll === 0 ? '' : `
     <tr style="font-weight:700; border-top:2px solid var(--wood);">
       <td>${escapeHtml(currentTeamName())} Total</td><td>${gpAll}</td><td>${seasonTeamPts}</td><td>${(seasonTeamPts/gpAll).toFixed(1)}</td>
-      <td>${seasonTeam.oreb+seasonTeam.dreb}</td><td>${seasonTeam.stl}</td><td>${seasonTeam.blk}</td><td>${seasonTeam.to}</td><td>${seasonTeam.fouls}</td>
+      <td>${seasonTeam.oreb+seasonTeam.dreb}</td><td>${seasonTeam.ast}</td><td>${seasonTeam.stl}</td><td>${seasonTeam.blk}</td><td>${seasonTeam.to}</td><td>${seasonTeam.fouls}</td>
       <td>${pct(seasonTeam.fgm2,seasonTeam.fga2)}%</td><td>${pct(seasonTeam.fgm3,seasonTeam.fga3)}%</td><td>${pct(seasonTeam.ftm,seasonTeam.fta)}%</td><td>—</td><td>—</td>
     </tr>
     <tr style="font-weight:700;">
       <td>All Opponents Total</td><td>${gpAll}</td><td>${seasonOppPts}</td><td>${(seasonOppPts/gpAll).toFixed(1)}</td>
-      <td>${seasonOpp.oreb+seasonOpp.dreb}</td><td>${seasonOpp.stl}</td><td>${seasonOpp.blk}</td><td>${seasonOpp.to}</td><td>${seasonOpp.fouls}</td>
+      <td>${seasonOpp.oreb+seasonOpp.dreb}</td><td>${seasonOpp.ast}</td><td>${seasonOpp.stl}</td><td>${seasonOpp.blk}</td><td>${seasonOpp.to}</td><td>${seasonOpp.fouls}</td>
       <td>${pct(seasonOpp.fgm2,seasonOpp.fga2)}%</td><td>${pct(seasonOpp.fgm3,seasonOpp.fga3)}%</td><td>${pct(seasonOpp.ftm,seasonOpp.fta)}%</td><td>—</td><td>—</td>
     </tr>`;
 
@@ -2024,7 +2087,7 @@ async function renderSeason(){
     ${excludedCount > 0 ? `<div class="section-label" style="margin-top:-0.4rem;">${excludedCount} game${excludedCount===1?'':'s'} excluded from these totals</div>` : ''}
     ${allGames.length===0 ? `<div class="empty"><span class="ball">🏀</span>No games recorded yet this season.</div>` : `
     <div class="table-wrap"><table>
-      <tr><th>Player</th><th>GP</th><th>PTS</th><th>PPG</th><th>REB</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>2P%</th><th>3P%</th><th>FT%</th><th>MPG</th><th>+/-</th></tr>
+      <tr><th>Player</th><th>GP</th><th>PTS</th><th>PPG</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>2P%</th><th>3P%</th><th>FT%</th><th>MPG</th><th>+/-</th></tr>
       ${rows}
       ${seasonSummaryRows}
     </table></div>`}
@@ -2150,7 +2213,7 @@ function attachHandlers(){
     const quarterMinutes = document.getElementById('quarterMinInput').value;
     const otMinutes = document.getElementById('otMinInput').value;
     currentGame = newGame(opp, date, homeAway, quarterMinutes, otMinutes);
-    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null;
+    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null; playLogSearchText = ''; playLogSearchType = 'all';
   boxScoreOpen = false; boxScoreSort = 'pts';
     activeGameId = currentGame.id;
     await saveJSON(teamKey('active-game-id'), activeGameId);
@@ -2204,6 +2267,12 @@ function attachHandlers(){
   const togglePlayLogBtn = document.getElementById('togglePlayLogBtn');
   if(togglePlayLogBtn) togglePlayLogBtn.onclick = () => { playLogExpanded = !playLogExpanded; render(); };
 
+  // Live: play-by-play search/filter
+  const playLogSearchInput = document.getElementById('playLogSearchInput');
+  if(playLogSearchInput) playLogSearchInput.oninput = () => { playLogSearchText = playLogSearchInput.value; renderPreservingFocus(render); };
+  const playLogSearchTypeSel = document.getElementById('playLogSearchType');
+  if(playLogSearchTypeSel) playLogSearchTypeSel.onchange = () => { playLogSearchType = playLogSearchTypeSel.value; render(); };
+
   // Live: sortable box-score popup
   const openBoxScoreBtn = document.getElementById('openBoxScoreBtn');
   if(openBoxScoreBtn) openBoxScoreBtn.onclick = () => { boxScoreOpen = true; render(); };
@@ -2243,10 +2312,9 @@ function attachHandlers(){
   document.querySelectorAll('[data-sub-in]').forEach(btn => {
     btn.onclick = () => {
       if(!canEditActiveTeam()) return;
-      if(currentGame.onCourt.length >= 5){
-        alert('Court is full — sub a player out first.');
-        return;
-      }
+      // No cap here anymore — you can bring the new player on before taking
+      // the outgoing one off. Stat recording itself is what's blocked
+      // until exactly 5 are on court again (see the [data-field] handler).
       currentGame.onCourt.push(btn.dataset.subIn);
       queueSaveGame();
       render();
@@ -2258,6 +2326,10 @@ function attachHandlers(){
   document.querySelectorAll('[data-field]').forEach(btn => {
     btn.onclick = () => {
       if(!selectedPlayerId || !canEditActiveTeam()) return;
+      if(currentGame.onCourt.length !== 5){
+        alert(`You need exactly 5 players on court to record stats (currently ${currentGame.onCourt.length}). Finish your substitution first.`);
+        return;
+      }
       const isOppSel = selectedPlayerId === 'OPPONENT';
       const playerName = isOppSel ? (currentGame.opponent || 'Opponent') : (roster.players.find(p=>p.id===selectedPlayerId)?.name || 'Player');
       const play = {
@@ -2348,7 +2420,7 @@ function attachHandlers(){
     activeGameId = null;
     await saveJSON(teamKey('active-game-id'), null);
     currentGame = null;
-    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null;
+    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null; playLogSearchText = ''; playLogSearchType = 'all';
   boxScoreOpen = false; boxScoreSort = 'pts';
     setTab('history');
     renderGameDetail(finishedGameId); // jump straight to the final summary, not just the schedule list
