@@ -638,7 +638,9 @@ let editingPlayerId = null; // roster player currently being edited inline
 let playLogExpanded = false; // whether the play-by-play list is expanded
 let lastSaveIssue = null; // null | 'offline' | 'error' — drives the live-game save banner across re-renders
 let boxScoreOpen = false; // whether the sortable box-score popup is showing
-let boxScoreSort = 'pts'; // which column the popup is currently sorted by
+let boxScoreSort = 'pts'; // which column the Live Game popup is currently sorted by
+let historyBoxSort = 'pts'; // which column History's box score table is sorted by
+let seasonBoxSort = 'pts'; // which column the Season Stats table is sorted by
 // Roster ordering — a per-device preference (not team data), so it's kept
 // in localStorage and reused everywhere a player list is shown: the Roster
 // tab itself, and the on-court/bench lists in Live Game.
@@ -1072,7 +1074,7 @@ function scoreLineChartHtml(game, usName, oppName){
     points.push({ label: QLABELS[q], home: cumHome, away: cumAway, homeQ: hQ, awayQ: aQ });
   });
 
-  const W = 340, H = 200, padL = 16, padR = 16, padT = 26, padB = 26;
+  const W = 340, H = 220, padL = 16, padR = 16, padT = 34, padB = 46;
   const innerW = W - padL - padR, innerH = H - padT - padB;
   const n = points.length;
   const xStep = n > 1 ? innerW/(n-1) : 0;
@@ -1083,12 +1085,17 @@ function scoreLineChartHtml(game, usName, oppName){
   const homePts = points.map((p,i)=>`${xOf(i)},${yOf(p.home)}`).join(' ');
   const awayPts = points.map((p,i)=>`${xOf(i)},${yOf(p.away)}`).join(' ');
   const gridLines = points.map((p,i)=>`<line x1="${xOf(i)}" y1="${padT}" x2="${xOf(i)}" y2="${padT+innerH}" style="stroke:var(--court-line); stroke-width:1;" stroke-dasharray="2,3"/>`).join('');
-  const xLabels = points.map((p,i)=>`<text x="${xOf(i)}" y="${H-6}" text-anchor="middle" font-size="9" style="fill:var(--paper-dim); font-family:'Space Mono',monospace;">${p.label}</text>`).join('');
+  const xLabels = points.map((p,i)=>`<text x="${xOf(i)}" y="${H-8}" text-anchor="middle" font-size="9" style="fill:var(--paper-dim); font-family:'Space Mono',monospace;">${p.label}</text>`).join('');
   const homeDots = points.map((p,i)=>`<circle cx="${xOf(i)}" cy="${yOf(p.home)}" r="3" style="fill:var(--accent);"/>`).join('');
   const awayDots = points.map((p,i)=>`<circle cx="${xOf(i)}" cy="${yOf(p.away)}" r="3" style="fill:var(--away-accent);"/>`).join('');
-  // Points scored IN that quarter (not cumulative) labeled right at each dot.
-  const homeQLabels = points.map((p,i)=> p.homeQ==null ? '' : `<text x="${xOf(i)}" y="${yOf(p.home)-7}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--accent); font-family:'Space Mono',monospace;">${p.homeQ}</text>`).join('');
-  const awayQLabels = points.map((p,i)=> p.awayQ==null ? '' : `<text x="${xOf(i)}" y="${yOf(p.away)+15}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--away-accent); font-family:'Space Mono',monospace;">${p.awayQ}</text>`).join('');
+  // Points scored IN that quarter (not cumulative). Fixed rows — home always
+  // above the plot area, away always below it — rather than sitting right
+  // next to each line, which used to overlap whenever the two lines were
+  // close together or crossed.
+  const homeLabelY = 16;
+  const awayLabelY = padT + innerH + 16;
+  const homeQLabels = points.map((p,i)=> p.homeQ==null ? '' : `<text x="${xOf(i)}" y="${homeLabelY}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--accent); font-family:'Space Mono',monospace;">${p.homeQ}</text>`).join('');
+  const awayQLabels = points.map((p,i)=> p.awayQ==null ? '' : `<text x="${xOf(i)}" y="${awayLabelY}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--away-accent); font-family:'Space Mono',monospace;">${p.awayQ}</text>`).join('');
   const lastHome = points[points.length-1].home, lastAway = points[points.length-1].away;
 
   return `
@@ -1799,7 +1806,19 @@ async function renderGameDetail(gameId){
     return;
   }
   const canEdit = canEditActiveTeam();
-  const { rows, totalsRows } = buildBoxScore(g);
+  const { totalsRows } = buildBoxScore(g); // still used for the fixed totals footer
+  const sortedBoxRows = computePlayerBoxRows(g).sort((a,b) => {
+    if(historyBoxSort === 'name') return a.name.localeCompare(b.name);
+    if(historyBoxSort === 'fgLabel') return b.fgm - a.fgm;
+    return (b[historyBoxSort]||0) - (a[historyBoxSort]||0);
+  });
+  const historyHeaderCells = BOX_MODAL_COLUMNS.map(c =>
+    `<th data-sort="${c.key}" data-sort-target="history" class="${historyBoxSort===c.key?'sorted':''}">${c.label}${historyBoxSort===c.key?' ▾':''}</th>`
+  ).join('');
+  const rows = sortedBoxRows.map(r => `<tr>
+      <td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.fgm}/${r.fga}</td><td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td>
+      <td>${r.oreb}</td><td>${r.dreb}</td><td>${r.ast}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td>
+    </tr>`).join('');
   const { quarterTable, prefix, usTag, oppTag } = buildQuarterTable(g);
 
   box.innerHTML = `
@@ -1819,9 +1838,9 @@ async function renderGameDetail(gameId){
     <div class="section-label">Team comparison — all categories</div>
     ${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}
     ${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
-    <div class="section-label">Box score — sorted by points</div>
+    <div class="section-label">Box score — tap a header to sort</div>
     <div class="table-wrap"><table>
-      <tr><th>Player</th><th>PTS</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>AST</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
+      <tr>${historyHeaderCells}</tr>
       ${rows}
       ${totalsRows}
     </table></div>
@@ -1833,6 +1852,9 @@ async function renderGameDetail(gameId){
   </div>`;
 
   document.getElementById('togglePlayLogBtn').onclick = () => { playLogExpanded = !playLogExpanded; renderGameDetail(g.id); };
+  document.querySelectorAll('[data-sort-target="history"]').forEach(th => {
+    th.onclick = () => { historyBoxSort = th.dataset.sort; renderGameDetail(g.id); };
+  });
   const playLogSearchInputH = document.getElementById('playLogSearchInput');
   if(playLogSearchInputH) playLogSearchInputH.oninput = () => { playLogSearchText = playLogSearchInputH.value; renderPreservingFocus(() => renderGameDetail(g.id)); };
   const playLogSearchTypeSelH = document.getElementById('playLogSearchType');
@@ -2137,23 +2159,40 @@ async function renderSeason(){
     });
   });
 
-  const rows = roster.players
+  const SEASON_COLUMNS = [
+    { key:'name', label:'Player' }, { key:'gp', label:'GP' }, { key:'pts', label:'PTS' },
+    { key:'ppg', label:'PPG' }, { key:'reb', label:'REB' }, { key:'ast', label:'AST' },
+    { key:'stl', label:'STL' }, { key:'blk', label:'BLK' }, { key:'to', label:'TO' },
+    { key:'fouls', label:'FLS' }, { key:'fg2pct', label:'2P%' }, { key:'fg3pct', label:'3P%' },
+    { key:'ftpct', label:'FT%' }, { key:'mpg', label:'MPG' }, { key:'plusMinus', label:'+/-' },
+  ];
+  const playerRows = roster.players
     .filter(p => totals[p.id]) // guard against stray ids
-    .sort((a,b) => (totals[b.id].pts||0) - (totals[a.id].pts||0)) // descending by season points
     .map(p => {
-    const t = totals[p.id];
-    const gp = t.games.size || 0;
-    const ppg = gp ? (t.pts/gp).toFixed(1) : '0.0';
-    const fg2pct = t.fga2 ? Math.round(100*t.fgm2/t.fga2) : 0;
-    const fg3pct = t.fga3 ? Math.round(100*t.fgm3/t.fga3) : 0;
-    const ftpct = t.fta ? Math.round(100*t.ftm/t.fta) : 0;
-    const mpg = gp ? fmtClock(Math.round(t.seconds/gp)) : '00:00';
-    return `<tr>
-      <td>${escapeHtml(p.name)}</td><td>${gp}</td><td>${t.pts}</td><td>${ppg}</td>
-      <td>${t.oreb+t.dreb}</td><td>${t.ast}</td><td>${t.stl}</td><td>${t.blk}</td><td>${t.to}</td><td>${t.fouls}</td>
-      <td>${fg2pct}%</td><td>${fg3pct}%</td><td>${ftpct}%</td><td>${mpg}</td><td>${t.plusMinus>=0?'+':''}${t.plusMinus}</td>
-    </tr>`;
-  }).join('');
+      const t = totals[p.id];
+      const gp = t.games.size || 0;
+      const ppg = gp ? t.pts/gp : 0;
+      const fg2pct = t.fga2 ? Math.round(100*t.fgm2/t.fga2) : 0;
+      const fg3pct = t.fga3 ? Math.round(100*t.fgm3/t.fga3) : 0;
+      const ftpct = t.fta ? Math.round(100*t.ftm/t.fta) : 0;
+      const mpg = gp ? Math.round(t.seconds/gp) : 0; // seconds — formatted at render time
+      return {
+        name: p.name, gp, pts: t.pts, ppg, reb: t.oreb+t.dreb, ast: t.ast, stl: t.stl, blk: t.blk,
+        to: t.to, fouls: t.fouls, fg2pct, fg3pct, ftpct, mpg, plusMinus: t.plusMinus
+      };
+    });
+  const sortedPlayerRows = [...playerRows].sort((a,b) => {
+    if(seasonBoxSort === 'name') return a.name.localeCompare(b.name);
+    return (b[seasonBoxSort]||0) - (a[seasonBoxSort]||0);
+  });
+  const seasonHeaderCells = SEASON_COLUMNS.map(c =>
+    `<th data-sort="${c.key}" data-sort-target="season" class="${seasonBoxSort===c.key?'sorted':''}">${c.label}${seasonBoxSort===c.key?' ▾':''}</th>`
+  ).join('');
+  const rows = sortedPlayerRows.map(r => `<tr>
+      <td>${escapeHtml(r.name)}</td><td>${r.gp}</td><td>${r.pts}</td><td>${r.ppg.toFixed(1)}</td>
+      <td>${r.reb}</td><td>${r.ast}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td>
+      <td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td><td>${fmtClock(r.mpg)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td>
+    </tr>`).join('');
 
   // Season-wide team vs. all-opponents aggregate, same shape as a single game's totals rows.
   const seasonTeam = { fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0,oreb:0,dreb:0,ast:0,stl:0,blk:0,to:0,fouls:0 };
@@ -2187,12 +2226,12 @@ async function renderSeason(){
     ${excludedCount > 0 ? `<div class="section-label" style="margin-top:-0.4rem;">${excludedCount} game${excludedCount===1?'':'s'} excluded from these totals</div>` : ''}
     ${allGames.length===0 ? `<div class="empty"><span class="ball">🏀</span>No games recorded yet this season.</div>` : `
     <div class="table-wrap"><table>
-      <tr><th>Player</th><th>GP</th><th>PTS</th><th>PPG</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>2P%</th><th>3P%</th><th>FT%</th><th>MPG</th><th>+/-</th></tr>
+      <tr>${seasonHeaderCells}</tr>
       ${rows}
       ${seasonSummaryRows}
     </table></div>`}
   </div>`;
-  attachHandlers(); // real content is in the DOM now — bind Share button etc.
+  attachHandlers(); // real content is in the DOM now — bind Share button, sort headers, etc.
 }
 
 /* ---------------------------------------------------------------
@@ -2209,6 +2248,9 @@ function attachHandlers(){
     const url = buildShareUrl({ team: activeTeamId, view: 'season' });
     shareLink(url, `${currentTeamName()} — season stats`);
   };
+  document.querySelectorAll('[data-sort-target="season"]').forEach(th => {
+    th.onclick = () => { seasonBoxSort = th.dataset.sort; renderSeason(); };
+  });
 
   // Roster
   const saveTeamBtn = document.getElementById('saveTeamName');
