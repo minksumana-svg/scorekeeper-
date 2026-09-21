@@ -1938,20 +1938,18 @@ async function renderGameDetail(gameId){
 }
 
 /* ---------------------------------------------------------------
-   ADMIN TAB — platform-wide view, visible only to ADMIN_EMAIL. Lists
-   every team in the whole app (not just ones this account belongs to),
-   with basic activity, and lets the admin remove a team and its data
-   entirely. This does NOT touch Firebase Authentication itself — it only
-   removes the team's Firestore data, so the person could still sign in
-   again afterward and would simply start fresh with no teams.
+   ADMIN TAB — platform-wide summary, visible only to ADMIN_EMAIL. One
+   row per owner account, aggregated across every team they own: how many
+   teams, how many people they've shared view/edit access with, total
+   games logged, and when they were last active.
 --------------------------------------------------------------- */
-async function loadAllTeamsForAdmin(){
+async function loadAdminOwnerSummary(){
   const snap = await getDocs(collection(db,'teams'));
-  const teams = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const allTeams = snap.docs.map(d => ({ id: d.id, ...d.data() }));
   // One extra read per team (its games-index) for a lightweight activity
   // summary — deliberately not scanning every single game doc for every
   // team, to keep this bounded as the number of teams grows.
-  const withActivity = await Promise.all(teams.map(async (t) => {
+  const withActivity = await Promise.all(allTeams.map(async (t) => {
     let gameCount = 0, lastActive = t.createdAt ? new Date(t.createdAt).toISOString().slice(0,10) : null;
     try{
       const idxSnap = await getDoc(doc(db,'teams',t.id,'data','games-index'));
@@ -1963,14 +1961,28 @@ async function loadAllTeamsForAdmin(){
     }catch(e){ /* fine — just means no activity summary for this team */ }
     return { ...t, gameCount, lastActive };
   }));
-  return withActivity;
-}
-// Deletes a team completely: every doc in its `data` subcollection, then
-// the team doc itself. Firestore doesn't cascade-delete subcollections.
-async function deleteTeamCompletely(teamId){
-  const dataSnap = await getDocs(collection(db,'teams',teamId,'data'));
-  await Promise.all(dataSnap.docs.map(d => deleteDoc(d.ref)));
-  await deleteDoc(doc(db,'teams',teamId));
+
+  // Roll every team up into its owner.
+  const byOwner = {};
+  withActivity.forEach(t => {
+    const uid = t.ownerUid;
+    if(!byOwner[uid]){
+      const info = (t.memberInfo||{})[uid] || {};
+      byOwner[uid] = {
+        uid, name: info.name || '', email: info.email || '',
+        teamCount: 0, viewCount: 0, editCount: 0, gameCount: 0, lastActive: null
+      };
+    }
+    const o = byOwner[uid];
+    o.teamCount += 1;
+    o.gameCount += t.gameCount;
+    Object.values(t.roles||{}).forEach(role => {
+      if(role === 'view') o.viewCount++;
+      else if(role === 'edit') o.editCount++;
+    });
+    if(t.lastActive && (!o.lastActive || t.lastActive > o.lastActive)) o.lastActive = t.lastActive;
+  });
+  return Object.values(byOwner);
 }
 async function renderAdmin(){
   const app = document.getElementById('app');
@@ -1978,60 +1990,34 @@ async function renderAdmin(){
     app.innerHTML = `<div class="card"><div class="empty">Not authorized.</div></div>`;
     return;
   }
-  app.innerHTML = `<div class="card"><div class="empty">Loading all teams…</div></div>`;
-  let allTeams;
+  app.innerHTML = `<div class="card"><div class="empty">Loading all owner accounts…</div></div>`;
+  let owners;
   try{
-    allTeams = await loadAllTeamsForAdmin();
+    owners = await loadAdminOwnerSummary();
   }catch(e){
-    app.innerHTML = `<div class="card"><div class="empty">Couldn't load teams: ${escapeHtml((e&&e.message)||String(e))}</div></div>`;
+    app.innerHTML = `<div class="card"><div class="empty">Couldn't load: ${escapeHtml((e&&e.message)||String(e))}</div></div>`;
     return;
   }
-  allTeams.sort((a,b) => (b.lastActive||'').localeCompare(a.lastActive||''));
+  owners.sort((a,b) => (b.lastActive||'').localeCompare(a.lastActive||''));
 
   app.innerHTML = `
   <div class="card">
-    <h2>All owner accounts (${allTeams.length} team${allTeams.length===1?'':'s'})</h2>
-    <div class="empty" style="padding:0.3rem 0 0.8rem;">Platform-wide view — every team across every signed-in user, visible only to you.</div>
-  </div>
-  ${allTeams.length===0 ? `<div class="card"><div class="empty"><span class="ball">🏀</span>No teams have been created yet.</div></div>` :
-  allTeams.map(t => {
-    const ownerInfo = (t.memberInfo||{})[t.ownerUid] || {};
-    const ownerLabel = ownerInfo.name || ownerInfo.email || t.ownerUid.slice(0,10);
-    return `
-    <div class="card">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
-        <h2 style="margin-bottom:0;">${escapeHtml(t.name || 'Unnamed team')}</h2>
-        <button class="btn danger" data-admin-delete-team="${escapeAttr(t.id)}" style="padding:0.3rem 0.7rem; font-size:0.75rem;">Delete team</button>
-      </div>
-      <div class="pc-meta" style="margin-top:0.5rem;">
-        <span>Owner: ${escapeHtml(ownerLabel)}</span>
-        <span>${(t.memberUids||[]).length} member${(t.memberUids||[]).length===1?'':'s'}</span>
-        <span>${t.gameCount} game${t.gameCount===1?'':'s'}</span>
-        <span>Last active: ${t.lastActive ? escapeHtml(t.lastActive) : 'Never'}</span>
-      </div>
-    </div>`;
-  }).join('')}`;
-
-  document.querySelectorAll('[data-admin-delete-team]').forEach(btn => {
-    btn.onclick = async () => {
-      const teamId = btn.dataset.adminDeleteTeam;
-      const team = allTeams.find(t => t.id === teamId);
-      if(!confirm(`Permanently delete "${team?.name||'this team'}" and all its data? This can't be undone.`)) return;
-      try{
-        await deleteTeamCompletely(teamId);
-        if(teamId === activeTeamId){
-          // If the admin happened to be looking at this exact team themselves,
-          // don't leave the app pointed at now-deleted data.
-          teams = teams.filter(t => t.id !== teamId);
-          activeTeamId = teams[0]?.id || null;
-          if(activeTeamId) await loadTeamData();
-        }
-        renderAdmin();
-      }catch(e){
-        alert('Could not delete: ' + ((e&&e.message)||String(e)));
-      }
-    };
-  });
+    <h2>All owner accounts (${owners.length})</h2>
+    <div class="empty" style="padding:0.3rem 0 0.8rem;">Platform-wide summary — visible only to you.</div>
+    ${owners.length===0 ? `<div class="empty"><span class="ball">🏀</span>No owner accounts yet.</div>` : `
+    <div class="table-wrap"><table>
+      <tr><th>Owner</th><th>Email</th><th>Teams</th><th>View-only shares</th><th>Edit shares</th><th>Games logged</th><th>Last active</th></tr>
+      ${owners.map(o => `<tr>
+        <td>${escapeHtml(o.name || '—')}</td>
+        <td>${escapeHtml(o.email || '—')}</td>
+        <td>${o.teamCount}</td>
+        <td>${o.viewCount}</td>
+        <td>${o.editCount}</td>
+        <td>${o.gameCount}</td>
+        <td>${o.lastActive ? escapeHtml(o.lastActive) : 'Never'}</td>
+      </tr>`).join('')}
+    </table></div>`}
+  </div>`;
 }
 
 /* ---------------------------------------------------------------
