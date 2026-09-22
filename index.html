@@ -1088,14 +1088,24 @@ function scoreLineChartHtml(game, usName, oppName){
   const xLabels = points.map((p,i)=>`<text x="${xOf(i)}" y="${H-8}" text-anchor="middle" font-size="9" style="fill:var(--paper-dim); font-family:'Space Mono',monospace;">${p.label}</text>`).join('');
   const homeDots = points.map((p,i)=>`<circle cx="${xOf(i)}" cy="${yOf(p.home)}" r="3" style="fill:var(--accent);"/>`).join('');
   const awayDots = points.map((p,i)=>`<circle cx="${xOf(i)}" cy="${yOf(p.away)}" r="3" style="fill:var(--away-accent);"/>`).join('');
-  // Points scored IN that quarter (not cumulative). Fixed rows — home always
-  // above the plot area, away always below it — rather than sitting right
-  // next to each line, which used to overlap whenever the two lines were
-  // close together or crossed.
-  const homeLabelY = 16;
-  const awayLabelY = padT + innerH + 16;
-  const homeQLabels = points.map((p,i)=> p.homeQ==null ? '' : `<text x="${xOf(i)}" y="${homeLabelY}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--accent); font-family:'Space Mono',monospace;">${p.homeQ}</text>`).join('');
-  const awayQLabels = points.map((p,i)=> p.awayQ==null ? '' : `<text x="${xOf(i)}" y="${awayLabelY}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--away-accent); font-family:'Space Mono',monospace;">${p.awayQ}</text>`).join('');
+  // Points scored IN that quarter (not cumulative), positioned right by
+  // their own dot — home just above its line, away just below its line —
+  // but with a guaranteed minimum gap between the pair at each point, so
+  // they never collide even when the two lines are close together or cross.
+  const LABEL_OFFSET = 9, MIN_LABEL_GAP = 12;
+  const labelYs = points.map(p => {
+    const hy = yOf(p.home), ay = yOf(p.away);
+    let homeLabelY = hy - LABEL_OFFSET;
+    let awayLabelY = ay + LABEL_OFFSET;
+    if(awayLabelY - homeLabelY < MIN_LABEL_GAP){
+      const mid = (homeLabelY + awayLabelY) / 2;
+      homeLabelY = mid - MIN_LABEL_GAP/2;
+      awayLabelY = mid + MIN_LABEL_GAP/2;
+    }
+    return { homeLabelY, awayLabelY };
+  });
+  const homeQLabels = points.map((p,i)=> p.homeQ==null ? '' : `<text x="${xOf(i)}" y="${labelYs[i].homeLabelY}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--accent); font-family:'Space Mono',monospace;">${p.homeQ}</text>`).join('');
+  const awayQLabels = points.map((p,i)=> p.awayQ==null ? '' : `<text x="${xOf(i)}" y="${labelYs[i].awayLabelY}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--away-accent); font-family:'Space Mono',monospace;">${p.awayQ}</text>`).join('');
   const lastHome = points[points.length-1].home, lastAway = points[points.length-1].away;
 
   return `
