@@ -884,9 +884,23 @@ function playLogHtml(game, readOnly){
     ? `<div class="empty" style="padding:0.8rem;">No plays match that search.</div>`
     : plays.map(play => {
     if(isSubPlay(play)){
-      // Substitutions show up in-line with everything else but aren't
-      // editable via the generic stat-field editor (there's no field to
-      // change them to) — only deletable, like any other play.
+      // Substitutions show up in-line with everything else. They can be
+      // reassigned to a different player (e.g. you tapped the wrong name)
+      // but the timestamp/quarter isn't editable — that's fixed by when the
+      // sub was recorded — and can always be deleted like any other play.
+      if(!readOnly && editingPlayId === play.id){
+        const subPlayerOptions = roster.players.map(p=>`<option value="${escapeAttr(p.id)}" ${play.playerId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('');
+        return `
+        <div class="play-row editing" data-play-id="${play.id}">
+          <div class="play-edit-grid" style="grid-template-columns:1fr;">
+            <select data-edit-sub-player>${subPlayerOptions}</select>
+          </div>
+          <div class="play-actions">
+            <button class="btn secondary" data-save-play="${play.id}">Save</button>
+            <button class="backlink" data-cancel-play="${play.id}">Cancel</button>
+          </div>
+        </div>`;
+      }
       return `
       <div class="play-row">
         <div class="play-meta">
@@ -896,6 +910,7 @@ function playLogHtml(game, readOnly){
           <span class="play-action">${play.field==='sub_in' ? '🔁 Sub in' : '🔁 Sub out'}</span>
         </div>
         ${readOnly ? '' : `<div class="play-actions">
+          <button class="icon-btn" style="color:var(--wood-light);" data-edit-play="${play.id}" aria-label="Edit play">✎</button>
           <button class="icon-btn" data-delete-play="${play.id}" aria-label="Delete play">✕</button>
         </div>`}
       </div>`;
@@ -1161,16 +1176,38 @@ function scoreLineChartHtml(game, usName, oppName){
   const homeDots = points.map((p,i)=> (i>0 && !p.isOpp) ? `<circle cx="${xOf(i)}" cy="${yOf(p.home)}" r="2.5" style="fill:var(--accent);"/>` : '').join('');
   const awayDots = points.map((p,i)=> (i>0 && p.isOpp) ? `<circle cx="${xOf(i)}" cy="${yOf(p.away)}" r="2.5" style="fill:var(--away-accent);"/>` : '').join('');
 
+  // Running-score labels at every quarter mark (each boundary gridline, plus
+  // the very end of the game/last quarter, which has no boundary after it)
+  // — the cumulative score each team had reached at that point, above the
+  // home line and below the away line, with a guaranteed minimum gap so the
+  // pair never collides even when the two scores are close together.
+  const markIdxSet = new Set(boundaries.map(b=>b.i));
+  markIdxSet.add(points.length-1);
+  const markIndices = [...markIdxSet].sort((a,b)=>a-b);
+  const MARK_LABEL_OFFSET = 11, MARK_MIN_GAP = 14;
+  const markLabels = markIndices.map(i => {
+    const p = points[i];
+    let homeLabelY = yOf(p.home) - MARK_LABEL_OFFSET;
+    let awayLabelY = yOf(p.away) + MARK_LABEL_OFFSET;
+    if(awayLabelY - homeLabelY < MARK_MIN_GAP){
+      const mid = (homeLabelY + awayLabelY) / 2;
+      homeLabelY = mid - MARK_MIN_GAP/2;
+      awayLabelY = mid + MARK_MIN_GAP/2;
+    }
+    return `<text x="${xOf(i)}" y="${homeLabelY}" text-anchor="middle" font-size="10" font-weight="700" style="fill:var(--accent); font-family:'Space Mono',monospace;">${p.home}</text>`
+         + `<text x="${xOf(i)}" y="${awayLabelY}" text-anchor="middle" font-size="10" font-weight="700" style="fill:var(--away-accent); font-family:'Space Mono',monospace;">${p.away}</text>`;
+  }).join('');
+
   // Per-basket point-value labels (2/3/1), positioned right by their own
   // dot — home just above its line, away just below — only drawn when
-  // there's enough horizontal room per point to stay legible. Below that
-  // threshold the finer-grained line itself (vs. the old per-quarter
-  // version) still carries the extra detail without cluttering the chart.
+  // there's enough horizontal room per point to stay legible, and skipped
+  // at quarter marks (those get the bigger running-score label above
+  // instead, so the two don't overlap).
   const MIN_LABEL_SPACING = 15;
   let homeLabels = '', awayLabels = '';
   if(xStep >= MIN_LABEL_SPACING){
-    homeLabels = points.map((p,i)=> (i>0 && !p.isOpp) ? `<text x="${xOf(i)}" y="${yOf(p.home)-9}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--accent); font-family:'Space Mono',monospace;">${p.scored}</text>` : '').join('');
-    awayLabels = points.map((p,i)=> (i>0 && p.isOpp) ? `<text x="${xOf(i)}" y="${yOf(p.away)+16}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--away-accent); font-family:'Space Mono',monospace;">${p.scored}</text>` : '').join('');
+    homeLabels = points.map((p,i)=> (i>0 && !p.isOpp && !markIdxSet.has(i)) ? `<text x="${xOf(i)}" y="${yOf(p.home)-9}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--accent); font-family:'Space Mono',monospace;">${p.scored}</text>` : '').join('');
+    awayLabels = points.map((p,i)=> (i>0 && p.isOpp && !markIdxSet.has(i)) ? `<text x="${xOf(i)}" y="${yOf(p.away)+16}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--away-accent); font-family:'Space Mono',monospace;">${p.scored}</text>` : '').join('');
   }
   const lastHome = points[points.length-1].home, lastAway = points[points.length-1].away;
 
@@ -1179,9 +1216,9 @@ function scoreLineChartHtml(game, usName, oppName){
     ${gridLines}
     <polyline points="${homePts}" fill="none" style="stroke:var(--accent); stroke-width:2.5;" stroke-linejoin="round" stroke-linecap="round"/>
     <polyline points="${awayPts}" fill="none" style="stroke:var(--away-accent); stroke-width:2.5;" stroke-linejoin="round" stroke-linecap="round"/>
-    ${homeDots}${awayDots}${homeLabels}${awayLabels}${xLabels}
+    ${homeDots}${awayDots}${homeLabels}${awayLabels}${markLabels}${xLabels}
   </svg>
-  <div class="bar-legend"><span class="legend-dot home"></span>${escapeHtml(usName)} (${lastHome}) &nbsp; <span class="legend-dot away"></span>${escapeHtml(oppName)} (${lastAway}) &nbsp; <span style="color:var(--paper-dim);">— one point per basket scored</span></div>`;
+  <div class="bar-legend"><span class="legend-dot home"></span>${escapeHtml(usName)} (${lastHome}) &nbsp; <span class="legend-dot away"></span>${escapeHtml(oppName)} (${lastAway}) &nbsp; <span style="color:var(--paper-dim);">— running score at each quarter mark; small numbers are individual baskets</span></div>`;
 }
 function fmtTimestamp(ts){
   if(!ts) return '';
@@ -2036,15 +2073,24 @@ async function renderGameDetail(gameId){
       const play = (g.playLog||[]).find(p => p.id === id);
       if(!play){ editingPlayId = null; renderGameDetail(g.id); return; }
       const row = btn.closest('.play-row');
-      const newQ = row.querySelector('[data-edit-quarter]').value;
-      const newPlayerId = row.querySelector('[data-edit-play-player]').value;
-      const newField = row.querySelector('[data-edit-field]').value;
-      applyPlayEffect(g, play, -1);
-      play.quarter = newQ;
-      play.playerId = newPlayerId;
-      play.playerName = newPlayerId === 'OPPONENT' ? (g.opponent||'Opponent') : (roster.players.find(p=>p.id===newPlayerId)?.name || 'Player');
-      play.field = newField;
-      applyPlayEffect(g, play, 1);
+      if(isSubPlay(play)){
+        // Subs can only be reassigned to a different player — the
+        // timestamp/quarter they happened at isn't editable, and they have
+        // no stat effect to reverse/reapply.
+        const newPlayerId = row.querySelector('[data-edit-sub-player]').value;
+        play.playerId = newPlayerId;
+        play.playerName = roster.players.find(p=>p.id===newPlayerId)?.name || 'Player';
+      } else {
+        const newQ = row.querySelector('[data-edit-quarter]').value;
+        const newPlayerId = row.querySelector('[data-edit-play-player]').value;
+        const newField = row.querySelector('[data-edit-field]').value;
+        applyPlayEffect(g, play, -1);
+        play.quarter = newQ;
+        play.playerId = newPlayerId;
+        play.playerName = newPlayerId === 'OPPONENT' ? (g.opponent||'Opponent') : (roster.players.find(p=>p.id===newPlayerId)?.name || 'Player');
+        play.field = newField;
+        applyPlayEffect(g, play, 1);
+      }
       editingPlayId = null;
       const res = await saveJSON(gameKey(g.id), g);
       gameCache[g.id] = g;
@@ -2655,15 +2701,34 @@ function attachHandlers(){
       const play = (currentGame.playLog||[]).find(p => p.id === id);
       if(!play){ editingPlayId = null; render(); return; }
       const row = btn.closest('.play-row');
-      const newQ = row.querySelector('[data-edit-quarter]').value;
-      const newPlayerId = row.querySelector('[data-edit-play-player]').value;
-      const newField = row.querySelector('[data-edit-field]').value;
-      applyPlayEffect(currentGame, play, -1); // undo old effect
-      play.quarter = newQ;
-      play.playerId = newPlayerId;
-      play.playerName = newPlayerId === 'OPPONENT' ? (currentGame.opponent||'Opponent') : (roster.players.find(p=>p.id===newPlayerId)?.name || 'Player');
-      play.field = newField;
-      applyPlayEffect(currentGame, play, 1); // apply new effect
+      if(isSubPlay(play)){
+        // Subs can only be reassigned to a different player — the
+        // timestamp/quarter they happened at isn't editable, and they have
+        // no stat effect to reverse/reapply.
+        const oldPlayerId = play.playerId;
+        const newPlayerId = row.querySelector('[data-edit-sub-player]').value;
+        play.playerId = newPlayerId;
+        play.playerName = roster.players.find(p=>p.id===newPlayerId)?.name || 'Player';
+        // Keep who's actually on court in sync with the correction, but
+        // only when the live state still matches what this play originally
+        // did (avoids scrambling onCourt if other subs happened since).
+        if(play.field === 'sub_in' && currentGame.onCourt.includes(oldPlayerId) && !currentGame.onCourt.includes(newPlayerId)){
+          currentGame.onCourt = currentGame.onCourt.map(id => id === oldPlayerId ? newPlayerId : id);
+          if(selectedPlayerId === oldPlayerId) selectedPlayerId = newPlayerId;
+        } else if(play.field === 'sub_out' && !currentGame.onCourt.includes(oldPlayerId) && currentGame.onCourt.includes(newPlayerId)){
+          currentGame.onCourt = currentGame.onCourt.map(id => id === newPlayerId ? oldPlayerId : id);
+        }
+      } else {
+        const newQ = row.querySelector('[data-edit-quarter]').value;
+        const newPlayerId = row.querySelector('[data-edit-play-player]').value;
+        const newField = row.querySelector('[data-edit-field]').value;
+        applyPlayEffect(currentGame, play, -1); // undo old effect
+        play.quarter = newQ;
+        play.playerId = newPlayerId;
+        play.playerName = newPlayerId === 'OPPONENT' ? (currentGame.opponent||'Opponent') : (roster.players.find(p=>p.id===newPlayerId)?.name || 'Player');
+        play.field = newField;
+        applyPlayEffect(currentGame, play, 1); // apply new effect
+      }
       editingPlayId = null;
       queueSaveGame();
       render();
