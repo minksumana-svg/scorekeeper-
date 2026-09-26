@@ -1954,9 +1954,9 @@ function buildBoxScore(g){
 const BOX_MODAL_COLUMNS = [
   { key:'name', label:'Player' },
   { key:'pts', label:'PTS' },
-  { key:'pts2', label:'2PT PTS' },
-  { key:'pts3', label:'3PT PTS' },
-  { key:'ptsFt', label:'FT PTS' },
+  { key:'pts2', label:'2pts' },
+  { key:'pts3', label:'3pts' },
+  { key:'ptsFt', label:'ftpts' },
   { key:'fgLabel', label:'FG' },
   { key:'fg2pct', label:'2P%' },
   { key:'fg3pct', label:'3P%' },
@@ -2045,7 +2045,7 @@ async function renderSharedGame(gameId){
   <div class="card">
     <h2>Box score — sorted by points</h2>
     <div class="table-wrap"><table>
-      <tr><th>Player</th><th>PTS</th><th>2PT PTS</th><th>3PT PTS</th><th>FT PTS</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>AST</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
+      <tr><th>Player</th><th>PTS</th><th>2pts</th><th>3pts</th><th>ftpts</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>AST</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
       ${rows}
       ${totalsRows}
     </table></div>
