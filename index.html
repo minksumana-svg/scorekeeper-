@@ -1920,8 +1920,9 @@ function computePlayerBoxRows(g){
     const sec = courtSeconds[p.id] || 0;
     const plusMinus = QUARTERS.reduce((sum,q)=>sum+(s[q].plusMinus||0),0);
     const fgm = fgm2+fgm3, fga = fga2+fga3;
+    const pts2 = fgm2*2, pts3 = fgm3*3, ptsFt = ftm;
     return {
-      id:p.id, name:p.name, pts, fgm, fga, fgm2, fga2, fgm3, fga3, ftm, fta,
+      id:p.id, name:p.name, pts, pts2, pts3, ptsFt, fgm, fga, fgm2, fga2, fgm3, fga3, ftm, fta,
       fg2pct: pct(fgm2,fga2), fg3pct: pct(fgm3,fga3), ftpct: pct(ftm,fta),
       oreb, dreb, ast, stl, blk, to, fouls, sec, plusMinus
     };
@@ -1932,7 +1933,7 @@ function computePlayerBoxRows(g){
 function buildBoxScore(g){
   const playerRows = computePlayerBoxRows(g).sort((a,b) => b.pts - a.pts); // descending by points
 
-  const rows = playerRows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.fgm}/${r.fga}</td><td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td><td>${r.oreb}</td><td>${r.dreb}</td><td>${r.ast}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td></tr>`).join('');
+  const rows = playerRows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.pts2}</td><td>${r.pts3}</td><td>${r.ptsFt}</td><td>${r.fgm}/${r.fga}</td><td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td><td>${r.oreb}</td><td>${r.dreb}</td><td>${r.ast}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td></tr>`).join('');
 
   const teamTotals = aggregateTeamStats(g, true);
   const oppTotals = aggregateTeamStats(g, false);
@@ -1942,10 +1943,10 @@ function buildBoxScore(g){
   const oppFgm = oppTotals.fgm2+oppTotals.fgm3, oppFga = oppTotals.fga2+oppTotals.fga3;
   const totalsRows = `
     <tr style="font-weight:700; border-top:2px solid var(--wood);">
-      <td>${escapeHtml(currentTeamName())} Total</td><td>${teamPts}</td><td>${teamFgm}/${teamFga}</td><td>${pct(teamTotals.fgm2,teamTotals.fga2)}%</td><td>${pct(teamTotals.fgm3,teamTotals.fga3)}%</td><td>${pct(teamTotals.ftm,teamTotals.fta)}%</td><td>${teamTotals.oreb}</td><td>${teamTotals.dreb}</td><td>${teamTotals.ast}</td><td>${teamTotals.stl}</td><td>${teamTotals.blk}</td><td>${teamTotals.to}</td><td>${teamTotals.fouls}</td><td>—</td><td>—</td>
+      <td>${escapeHtml(currentTeamName())} Total</td><td>${teamPts}</td><td>${teamTotals.fgm2*2}</td><td>${teamTotals.fgm3*3}</td><td>${teamTotals.ftm}</td><td>${teamFgm}/${teamFga}</td><td>${pct(teamTotals.fgm2,teamTotals.fga2)}%</td><td>${pct(teamTotals.fgm3,teamTotals.fga3)}%</td><td>${pct(teamTotals.ftm,teamTotals.fta)}%</td><td>${teamTotals.oreb}</td><td>${teamTotals.dreb}</td><td>${teamTotals.ast}</td><td>${teamTotals.stl}</td><td>${teamTotals.blk}</td><td>${teamTotals.to}</td><td>${teamTotals.fouls}</td><td>—</td><td>—</td>
     </tr>
     <tr style="font-weight:700;">
-      <td>${escapeHtml(g.opponent||'Opponent')} Total</td><td>${oppPts}</td><td>${oppFgm}/${oppFga}</td><td>${pct(oppTotals.fgm2,oppTotals.fga2)}%</td><td>${pct(oppTotals.fgm3,oppTotals.fga3)}%</td><td>${pct(oppTotals.ftm,oppTotals.fta)}%</td><td>${oppTotals.oreb}</td><td>${oppTotals.dreb}</td><td>${oppTotals.ast}</td><td>${oppTotals.stl}</td><td>${oppTotals.blk}</td><td>${oppTotals.to}</td><td>${oppTotals.fouls}</td><td>—</td><td>—</td>
+      <td>${escapeHtml(g.opponent||'Opponent')} Total</td><td>${oppPts}</td><td>${oppTotals.fgm2*2}</td><td>${oppTotals.fgm3*3}</td><td>${oppTotals.ftm}</td><td>${oppFgm}/${oppFga}</td><td>${pct(oppTotals.fgm2,oppTotals.fga2)}%</td><td>${pct(oppTotals.fgm3,oppTotals.fga3)}%</td><td>${pct(oppTotals.ftm,oppTotals.fta)}%</td><td>${oppTotals.oreb}</td><td>${oppTotals.dreb}</td><td>${oppTotals.ast}</td><td>${oppTotals.stl}</td><td>${oppTotals.blk}</td><td>${oppTotals.to}</td><td>${oppTotals.fouls}</td><td>—</td><td>—</td>
     </tr>`;
   return { rows, totalsRows };
 }
@@ -1953,6 +1954,9 @@ function buildBoxScore(g){
 const BOX_MODAL_COLUMNS = [
   { key:'name', label:'Player' },
   { key:'pts', label:'PTS' },
+  { key:'pts2', label:'2PT PTS' },
+  { key:'pts3', label:'3PT PTS' },
+  { key:'ptsFt', label:'FT PTS' },
   { key:'fgLabel', label:'FG' },
   { key:'fg2pct', label:'2P%' },
   { key:'fg3pct', label:'3P%' },
@@ -1977,7 +1981,7 @@ function boxScoreModalHtml(g){
     `<th data-sort="${c.key}" class="${boxScoreSort===c.key?'sorted':''}">${c.label}${boxScoreSort===c.key?' ▾':''}</th>`
   ).join('');
   const bodyRows = rows.map(r => `<tr>
-    <td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.fgm}/${r.fga}</td>
+    <td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.pts2}</td><td>${r.pts3}</td><td>${r.ptsFt}</td><td>${r.fgm}/${r.fga}</td>
     <td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td>
     <td>${r.oreb}</td><td>${r.dreb}</td><td>${r.ast}</td><td>${r.stl}</td><td>${r.blk}</td>
     <td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td>
@@ -1993,7 +1997,7 @@ function boxScoreModalHtml(g){
       <div class="table-wrap">
         <table>
           <tr>${headerCells}</tr>
-          ${bodyRows || `<tr><td colspan="15" style="text-align:center; color:var(--paper-dim); padding:1rem;">No players yet</td></tr>`}
+          ${bodyRows || `<tr><td colspan="18" style="text-align:center; color:var(--paper-dim); padding:1rem;">No players yet</td></tr>`}
         </table>
       </div>
     </div>
@@ -2041,7 +2045,7 @@ async function renderSharedGame(gameId){
   <div class="card">
     <h2>Box score — sorted by points</h2>
     <div class="table-wrap"><table>
-      <tr><th>Player</th><th>PTS</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>AST</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
+      <tr><th>Player</th><th>PTS</th><th>2PT PTS</th><th>3PT PTS</th><th>FT PTS</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>AST</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
       ${rows}
       ${totalsRows}
     </table></div>
@@ -2065,7 +2069,7 @@ async function renderGameDetail(gameId){
     `<th data-sort="${c.key}" data-sort-target="history" class="${historyBoxSort===c.key?'sorted':''}">${c.label}${historyBoxSort===c.key?' ▾':''}</th>`
   ).join('');
   const rows = sortedBoxRows.map(r => `<tr>
-      <td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.fgm}/${r.fga}</td><td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td>
+      <td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.pts2}</td><td>${r.pts3}</td><td>${r.ptsFt}</td><td>${r.fgm}/${r.fga}</td><td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td>
       <td>${r.oreb}</td><td>${r.dreb}</td><td>${r.ast}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td>
     </tr>`).join('');
   const { quarterTable, prefix, usTag, oppTag } = buildQuarterTable(g);
