@@ -632,6 +632,7 @@ let currentGame = null; // full game object when on live tab
 let selectedPlayerId = null; // which on-court player (or 'OPPONENT') the panel is recording for
 let showSubPicker = false; // whether the bench picker is expanded
 let editingPlayId = null; // play-by-play entry currently being edited
+let insertedPlayId = null; // a play just created via "insert above" and not yet confirmed — Cancel deletes it instead of just closing the editor
 let playLogSearchText = ''; // filters the play-by-play list by player name
 let playLogSearchType = 'all'; // filters the play-by-play list by action type
 let editingPlayerId = null; // roster player currently being edited inline
@@ -910,6 +911,7 @@ function playLogHtml(game, readOnly){
           <span class="play-action">${play.field==='sub_in' ? '🔁 Sub in' : '🔁 Sub out'}</span>
         </div>
         ${readOnly ? '' : `<div class="play-actions">
+          <button class="icon-btn" style="color:var(--wood-light);" data-insert-above="${play.id}" aria-label="Insert a line above this one" title="Insert a line above">⬆</button>
           <button class="icon-btn" style="color:var(--wood-light);" data-edit-play="${play.id}" aria-label="Edit play">✎</button>
           <button class="icon-btn" data-delete-play="${play.id}" aria-label="Delete play">✕</button>
         </div>`}
@@ -942,6 +944,7 @@ function playLogHtml(game, readOnly){
         <span class="play-action">${FIELD_LABELS[play.field]||play.field}</span>
       </div>
       ${readOnly ? '' : `<div class="play-actions">
+        <button class="icon-btn" style="color:var(--wood-light);" data-insert-above="${play.id}" aria-label="Insert a line above this one" title="Insert a line above">⬆</button>
         <button class="icon-btn" style="color:var(--wood-light);" data-edit-play="${play.id}" aria-label="Edit play">✎</button>
         <button class="icon-btn" data-delete-play="${play.id}" aria-label="Delete play">✕</button>
       </div>`}
@@ -992,6 +995,50 @@ function logSubPlay(game, playerId, field){
     clockAtPlay: game.quarterRemaining[game.currentQuarter],
     ts: Date.now()
   });
+}
+// Builds a new play to sit immediately after `belowPlay` in the chronological
+// playLog array (i.e. immediately ABOVE it in the reversed, newest-first
+// display) — used by the "insert above" (⬆) button. Its quarter/clock/ts are
+// interpolated between belowPlay and whichever play currently follows it
+// chronologically ("above" in the display), so it lands at the right spot
+// on the timeline without the user having to guess a clock reading.
+function buildInsertedPlay(game, belowPlay){
+  const idx = (game.playLog||[]).findIndex(p => p.id === belowPlay.id);
+  const above = idx >= 0 ? game.playLog[idx+1] : null;
+  let quarter = belowPlay.quarter;
+  let clockAtPlay, ts;
+  if(above && above.quarter === belowPlay.quarter){
+    // Same quarter on both sides — split the difference.
+    clockAtPlay = Math.round((belowPlay.clockAtPlay + above.clockAtPlay) / 2);
+    ts = Math.round(((belowPlay.ts||0) + (above.ts||Date.now())) / 2);
+  } else {
+    // belowPlay is the most recent play, or the next one is in a later
+    // quarter — place the new play a tick more recent than belowPlay, still
+    // inside belowPlay's quarter.
+    clockAtPlay = Math.max(0, (belowPlay.clockAtPlay||0) - 1);
+    ts = (belowPlay.ts||Date.now()) + 1;
+  }
+  const defaultPlayerId = isSubPlay(belowPlay) ? (roster.players[0]?.id || 'OPPONENT') : belowPlay.playerId;
+  const defaultPlayerName = defaultPlayerId === 'OPPONENT' ? (game.opponent || 'Opponent') : (roster.players.find(p=>p.id===defaultPlayerId)?.name || 'Player');
+  return {
+    id: 'play_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+    quarter, playerId: defaultPlayerId, playerName: defaultPlayerName,
+    field: 'fgm2', // a sensible placeholder — the row opens straight into edit mode so this gets picked properly
+    onCourtSnapshot: [...(belowPlay.onCourtSnapshot || [])],
+    clockAtPlay, ts
+  };
+}
+// Inserts a new (placeholder) play immediately above `belowPlayId` and
+// applies its (placeholder) stat effect — the caller opens it straight into
+// edit mode so the user picks the real player/type; Cancel on that row
+// removes it again rather than leaving the placeholder behind.
+function insertPlayAbove(game, belowPlayId){
+  const idx = (game.playLog||[]).findIndex(p => p.id === belowPlayId);
+  if(idx === -1) return null;
+  const newPlay = buildInsertedPlay(game, game.playLog[idx]);
+  applyPlayEffect(game, newPlay, 1);
+  game.playLog.splice(idx+1, 0, newPlay);
+  return newPlay;
 }
 function playerPoints(qs){ return qs.fgm2*2 + qs.fgm3*3 + qs.ftm; }
 function totalPlayerStat(pid, field){
@@ -1107,118 +1154,151 @@ function comparisonCombinedHtml(game, usName, oppName){
 // on-court time for MPG (see computeCourtSecondsByPlayer below).
 function isSubPlay(play){ return play && (play.field === 'sub_in' || play.field === 'sub_out'); }
 
-// Builds one chart point per actual scoring play (2PT/3PT/FT make), in
-// chronological order, instead of just one per quarter boundary — much
-// finer granularity on the progression line. Falls back to a per-quarter
-// reconstruction for any game recorded before scoring plays existed in the
-// play log (so old games stay displayable).
+// Builds chart points from actual scoring plays, positioned by REAL elapsed
+// time within their quarter rather than by basket index — each quarter gets
+// an equal-width slot on the x-axis (since quarters are normally evenly
+// timed), and within a quarter, points are spaced proportionally to how far
+// into that quarter's clock they happened. A synthetic "quarter end" point
+// is added at the end of every played quarter's slot (fraction=1) even if
+// no basket happened right at the buzzer, carrying that quarter's own point
+// total (not the cumulative game score) for the quarter-mark labels. Falls
+// back to one end-of-quarter point per quarter for games recorded before
+// scoring plays existed in the play log (so old games stay displayable).
 function scoreProgressionPoints(game){
+  const qLenOf = (q) => q === 'ot' ? (game.otLengthSec||0) : (game.quarterLengthSec||0);
+  let activeQuarters = QUARTERS.filter(q => (game.playLog||[]).some(p => p.quarter === q));
+  if(activeQuarters.length === 0) activeQuarters = [game.currentQuarter || 'q1'];
+  const segW = 1 / activeQuarters.length; // each quarter gets an equal-width x-axis slot
+  const segEnd = (q) => (activeQuarters.indexOf(q) + 1) * segW;
+  const fracFor = (q, clockAtPlay) => {
+    const len = qLenOf(q) || 1;
+    const elapsed = Math.min(len, Math.max(0, len - (clockAtPlay!=null ? clockAtPlay : 0)));
+    return activeQuarters.indexOf(q) * segW + (elapsed/len) * segW;
+  };
+
+  const points = [{ frac:0, home:0, away:0, scored:null, isOpp:null, quarter:null, isQuarterEnd:false }];
+
   const scoringPlays = (game.playLog || [])
-    .filter(p => !isSubPlay(p) && (p.field === 'fgm2' || p.field === 'fgm3' || p.field === 'ftm'))
+    .filter(p => !isSubPlay(p) && (p.field === 'fgm2' || p.field === 'fgm3' || p.field === 'ftm') && activeQuarters.includes(p.quarter))
     .slice()
-    .sort((a,b) => (a.ts||0) - (b.ts||0));
+    .sort((a,b) => {
+      const qa = activeQuarters.indexOf(a.quarter), qb = activeQuarters.indexOf(b.quarter);
+      if(qa !== qb) return qa - qb;
+      return (b.clockAtPlay||0) - (a.clockAtPlay||0); // higher remaining time = earlier in the quarter
+    });
 
-  const points = [{ home:0, away:0, scored:null, isOpp:null, quarter:null }];
+  let cumHome = 0, cumAway = 0;
+  let quarterStartHome = 0, quarterStartAway = 0;
+  let curQ = activeQuarters[0];
+  const closeQuarter = (q) => {
+    points.push({ frac: segEnd(q), home:cumHome, away:cumAway, quarter:q, isQuarterEnd:true,
+      quarterHome: cumHome - quarterStartHome, quarterAway: cumAway - quarterStartAway });
+    quarterStartHome = cumHome; quarterStartAway = cumAway;
+  };
 
-  if(scoringPlays.length === 0){
-    let cumHome = 0, cumAway = 0;
-    QUARTERS.forEach(q => {
+  if(scoringPlays.length === 0 && (game.playLog||[]).length === 0){
+    // No play log at all (very old game) — fall back to whatever the
+    // per-quarter stat totals still hold.
+    activeQuarters.forEach(q => {
       const hQ = Object.values(game.stats).reduce((sum,s)=>sum+playerPoints(s[q]),0);
       const aQ = playerPoints((game.oppStats && game.oppStats[q]) || emptyQuarterStat());
-      if(hQ === 0 && aQ === 0 && q === 'ot') return; // skip an unused OT boundary
       cumHome += hQ; cumAway += aQ;
-      points.push({ home:cumHome, away:cumAway, scored: hQ||aQ||null, isOpp: aQ>hQ, quarter:q });
+      closeQuarter(q);
     });
     return points;
   }
 
-  let cumHome = 0, cumAway = 0;
   scoringPlays.forEach(play => {
+    if(play.quarter !== curQ){
+      closeQuarter(curQ);
+      // Fill in any fully-scoreless quarters in between with their own
+      // (0-0) end mark so every played quarter still gets a mark.
+      for(let qi = activeQuarters.indexOf(curQ)+1; qi < activeQuarters.indexOf(play.quarter); qi++) closeQuarter(activeQuarters[qi]);
+      curQ = play.quarter;
+    }
     const scored = play.field === 'fgm3' ? 3 : (play.field === 'ftm' ? 1 : 2);
     const isOpp = play.playerId === 'OPPONENT';
     if(isOpp) cumAway += scored; else cumHome += scored;
-    points.push({ home:cumHome, away:cumAway, scored, isOpp, quarter: play.quarter });
+    points.push({ frac: fracFor(play.quarter, play.clockAtPlay), home:cumHome, away:cumAway, scored, isOpp, quarter: play.quarter, isQuarterEnd:false });
   });
+  closeQuarter(curQ);
+  for(let qi = activeQuarters.indexOf(curQ)+1; qi < activeQuarters.length; qi++) closeQuarter(activeQuarters[qi]);
+
   return points;
 }
-// Cumulative-score line chart, one point per actual scoring play (or per
-// quarter, for older games without a granular play log) — see
-// scoreProgressionPoints above.
+// Cumulative-score line chart, positioned by real elapsed time per quarter
+// (see scoreProgressionPoints above) with a labeled mark at the end of
+// every quarter.
 function scoreLineChartHtml(game, usName, oppName){
   const points = scoreProgressionPoints(game);
 
   const W = 340, H = 220, padL = 16, padR = 16, padT = 34, padB = 46;
   const innerW = W - padL - padR, innerH = H - padT - padB;
-  const n = points.length;
-  const xStep = n > 1 ? innerW/(n-1) : 0;
   const maxVal = Math.max(1, ...points.map(p => Math.max(p.home, p.away)));
-  const xOf = i => padL + i*xStep;
+  const xOf = frac => padL + frac*innerW;
   const yOf = v => padT + innerH - (v/maxVal)*innerH;
 
-  const homePts = points.map((p,i)=>`${xOf(i)},${yOf(p.home)}`).join(' ');
-  const awayPts = points.map((p,i)=>`${xOf(i)},${yOf(p.away)}`).join(' ');
+  const homePts = points.map(p=>`${xOf(p.frac)},${yOf(p.home)}`).join(' ');
+  const awayPts = points.map(p=>`${xOf(p.frac)},${yOf(p.away)}`).join(' ');
 
-  // Quarter-boundary gridlines/labels only — not one per point. With a
-  // basket-by-basket line there can be dozens of points, so per-point x
-  // labels would overlap into illegibility; a boundary is the first point
-  // belonging to a new quarter.
-  let lastQ = null;
-  const boundaries = [];
-  points.forEach((p,i) => {
-    if(p.quarter && p.quarter !== lastQ){ boundaries.push({ i, label: QLABELS[p.quarter] }); lastQ = p.quarter; }
-  });
-  const gridLines = boundaries.map(b=>`<line x1="${xOf(b.i)}" y1="${padT}" x2="${xOf(b.i)}" y2="${padT+innerH}" style="stroke:var(--court-line); stroke-width:1;" stroke-dasharray="2,3"/>`).join('');
-  const xLabels = boundaries.map(b=>`<text x="${xOf(b.i)}" y="${H-8}" text-anchor="middle" font-size="9" style="fill:var(--paper-dim); font-family:'Space Mono',monospace;">${b.label}</text>`).join('');
+  // A zero baseline across the full width, plus a dashed vertical gridline
+  // at the END of every quarter (not the start) with that quarter's label.
+  const zeroLine = `<line x1="${padL}" y1="${yOf(0)}" x2="${padL+innerW}" y2="${yOf(0)}" style="stroke:var(--paper-dim); stroke-width:1; opacity:0.5;"/>`;
+  const marks = points.filter(p => p.isQuarterEnd);
+  const gridLines = marks.map(p=>`<line x1="${xOf(p.frac)}" y1="${padT}" x2="${xOf(p.frac)}" y2="${padT+innerH}" style="stroke:var(--court-line); stroke-width:1;" stroke-dasharray="2,3"/>`).join('');
+  const xLabels = marks.map(p=>`<text x="${xOf(p.frac)}" y="${H-8}" text-anchor="middle" font-size="9" style="fill:var(--paper-dim); font-family:'Space Mono',monospace;">${QLABELS[p.quarter]}</text>`).join('');
 
   // Dots only where a basket actually happened, for the team that scored —
-  // keeps a dense chart from becoming a solid smear of circles. The Start
-  // point never gets a dot.
-  const homeDots = points.map((p,i)=> (i>0 && !p.isOpp) ? `<circle cx="${xOf(i)}" cy="${yOf(p.home)}" r="2.5" style="fill:var(--accent);"/>` : '').join('');
-  const awayDots = points.map((p,i)=> (i>0 && p.isOpp) ? `<circle cx="${xOf(i)}" cy="${yOf(p.away)}" r="2.5" style="fill:var(--away-accent);"/>` : '').join('');
+  // keeps a dense chart from becoming a solid smear of circles.
+  const homeDots = points.map(p=> (!p.isQuarterEnd && p.quarter && !p.isOpp) ? `<circle cx="${xOf(p.frac)}" cy="${yOf(p.home)}" r="2.5" style="fill:var(--accent);"/>` : '').join('');
+  const awayDots = points.map(p=> (!p.isQuarterEnd && p.quarter && p.isOpp) ? `<circle cx="${xOf(p.frac)}" cy="${yOf(p.away)}" r="2.5" style="fill:var(--away-accent);"/>` : '').join('');
+  // A slightly bigger dot anchors each quarter-end mark on both lines.
+  const markDots = marks.map(p=>`<circle cx="${xOf(p.frac)}" cy="${yOf(p.home)}" r="3" style="fill:var(--accent);"/><circle cx="${xOf(p.frac)}" cy="${yOf(p.away)}" r="3" style="fill:var(--away-accent);"/>`).join('');
 
-  // Running-score labels at every quarter mark (each boundary gridline, plus
-  // the very end of the game/last quarter, which has no boundary after it)
-  // — the cumulative score each team had reached at that point, above the
-  // home line and below the away line, with a guaranteed minimum gap so the
-  // pair never collides even when the two scores are close together.
-  const markIdxSet = new Set(boundaries.map(b=>b.i));
-  markIdxSet.add(points.length-1);
-  const markIndices = [...markIdxSet].sort((a,b)=>a-b);
+  // Quarter-mark labels show that quarter's OWN point total (not the
+  // cumulative game score), placed on whichever side of its own line is
+  // actually the leading side at that point — the team ahead (drawn higher
+  // on the chart) gets its number above the line, the team behind (drawn
+  // lower) gets its number below, so the label always sits on the outside
+  // of the two lines rather than assuming home is always on top. A minimum
+  // gap keeps the pair from colliding when the scores are close.
   const MARK_LABEL_OFFSET = 11, MARK_MIN_GAP = 14;
-  const markLabels = markIndices.map(i => {
-    const p = points[i];
-    let homeLabelY = yOf(p.home) - MARK_LABEL_OFFSET;
-    let awayLabelY = yOf(p.away) + MARK_LABEL_OFFSET;
-    if(awayLabelY - homeLabelY < MARK_MIN_GAP){
-      const mid = (homeLabelY + awayLabelY) / 2;
-      homeLabelY = mid - MARK_MIN_GAP/2;
-      awayLabelY = mid + MARK_MIN_GAP/2;
+  const markLabels = marks.map(p => {
+    const homeAbove = p.home >= p.away;
+    let topY = homeAbove ? yOf(p.home) - MARK_LABEL_OFFSET : yOf(p.away) - MARK_LABEL_OFFSET;
+    let bottomY = homeAbove ? yOf(p.away) + MARK_LABEL_OFFSET : yOf(p.home) + MARK_LABEL_OFFSET;
+    if(bottomY - topY < MARK_MIN_GAP){
+      const mid = (topY + bottomY) / 2;
+      topY = mid - MARK_MIN_GAP/2;
+      bottomY = mid + MARK_MIN_GAP/2;
     }
-    return `<text x="${xOf(i)}" y="${homeLabelY}" text-anchor="middle" font-size="10" font-weight="700" style="fill:var(--accent); font-family:'Space Mono',monospace;">${p.home}</text>`
-         + `<text x="${xOf(i)}" y="${awayLabelY}" text-anchor="middle" font-size="10" font-weight="700" style="fill:var(--away-accent); font-family:'Space Mono',monospace;">${p.away}</text>`;
+    const homeLabelY = homeAbove ? topY : bottomY;
+    const awayLabelY = homeAbove ? bottomY : topY;
+    return `<text x="${xOf(p.frac)}" y="${homeLabelY}" text-anchor="middle" font-size="10" font-weight="700" style="fill:var(--accent); font-family:'Space Mono',monospace;">${p.quarterHome}</text>`
+         + `<text x="${xOf(p.frac)}" y="${awayLabelY}" text-anchor="middle" font-size="10" font-weight="700" style="fill:var(--away-accent); font-family:'Space Mono',monospace;">${p.quarterAway}</text>`;
   }).join('');
 
   // Per-basket point-value labels (2/3/1), positioned right by their own
   // dot — home just above its line, away just below — only drawn when
-  // there's enough horizontal room per point to stay legible, and skipped
-  // at quarter marks (those get the bigger running-score label above
-  // instead, so the two don't overlap).
+  // there's enough average horizontal room per basket to stay legible.
   const MIN_LABEL_SPACING = 15;
+  const avgStep = points.length > 1 ? innerW/(points.length-1) : innerW;
   let homeLabels = '', awayLabels = '';
-  if(xStep >= MIN_LABEL_SPACING){
-    homeLabels = points.map((p,i)=> (i>0 && !p.isOpp && !markIdxSet.has(i)) ? `<text x="${xOf(i)}" y="${yOf(p.home)-9}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--accent); font-family:'Space Mono',monospace;">${p.scored}</text>` : '').join('');
-    awayLabels = points.map((p,i)=> (i>0 && p.isOpp && !markIdxSet.has(i)) ? `<text x="${xOf(i)}" y="${yOf(p.away)+16}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--away-accent); font-family:'Space Mono',monospace;">${p.scored}</text>` : '').join('');
+  if(avgStep >= MIN_LABEL_SPACING){
+    homeLabels = points.map(p=> (!p.isQuarterEnd && p.quarter && !p.isOpp) ? `<text x="${xOf(p.frac)}" y="${yOf(p.home)-9}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--accent); font-family:'Space Mono',monospace;">${p.scored}</text>` : '').join('');
+    awayLabels = points.map(p=> (!p.isQuarterEnd && p.quarter && p.isOpp) ? `<text x="${xOf(p.frac)}" y="${yOf(p.away)+16}" text-anchor="middle" font-size="9" font-weight="700" style="fill:var(--away-accent); font-family:'Space Mono',monospace;">${p.scored}</text>` : '').join('');
   }
   const lastHome = points[points.length-1].home, lastAway = points[points.length-1].away;
 
   return `
   <svg viewBox="0 0 ${W} ${H}" class="score-line-svg" style="width:100%; height:auto; display:block;">
+    ${zeroLine}
     ${gridLines}
     <polyline points="${homePts}" fill="none" style="stroke:var(--accent); stroke-width:2.5;" stroke-linejoin="round" stroke-linecap="round"/>
     <polyline points="${awayPts}" fill="none" style="stroke:var(--away-accent); stroke-width:2.5;" stroke-linejoin="round" stroke-linecap="round"/>
-    ${homeDots}${awayDots}${homeLabels}${awayLabels}${markLabels}${xLabels}
+    ${homeDots}${awayDots}${markDots}${homeLabels}${awayLabels}${markLabels}${xLabels}
   </svg>
-  <div class="bar-legend"><span class="legend-dot home"></span>${escapeHtml(usName)} (${lastHome}) &nbsp; <span class="legend-dot away"></span>${escapeHtml(oppName)} (${lastAway}) &nbsp; <span style="color:var(--paper-dim);">— running score at each quarter mark; small numbers are individual baskets</span></div>`;
+  <div class="bar-legend"><span class="legend-dot home"></span>${escapeHtml(usName)} (${lastHome}) &nbsp; <span class="legend-dot away"></span>${escapeHtml(oppName)} (${lastAway}) &nbsp; <span style="color:var(--paper-dim);">— numbers at each quarter mark are that quarter's points</span></div>`;
 }
 function fmtTimestamp(ts){
   if(!ts) return '';
@@ -1371,7 +1451,7 @@ async function loadTeamData(){
   gamesIndex = gamesIndexRes;
   activeGameId = activeGameIdRes;
   currentGame = null;
-  selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null; playLogSearchText = ''; playLogSearchType = 'all';
+  selectedPlayerId = null; showSubPicker = false; editingPlayId = null; insertedPlayId = null; playLogExpanded = false; lastSaveIssue = null; playLogSearchText = ''; playLogSearchType = 'all';
   boxScoreOpen = false; boxScoreSort = 'pts';
   editingPlayerId = null;
   if(activeGameId){
@@ -2061,11 +2141,47 @@ async function renderGameDetail(gameId){
   };
   // Play-by-play edit/delete (History view) — saves immediately since there's
   // no live-game autosave loop backing this screen.
+  document.querySelectorAll('[data-insert-above]').forEach(btn => {
+    btn.onclick = async () => {
+      const newPlay = insertPlayAbove(g, btn.dataset.insertAbove);
+      if(!newPlay) return;
+      editingPlayId = newPlay.id;
+      insertedPlayId = newPlay.id;
+      const res = await saveJSON(gameKey(g.id), g);
+      gameCache[g.id] = g;
+      updateIndexSummaryFor(g);
+      await persistGamesIndex();
+      if(!res.ok) alert('Could not save: ' + res.error);
+      renderGameDetail(g.id);
+    };
+  });
   document.querySelectorAll('[data-edit-play]').forEach(btn => {
     btn.onclick = () => { editingPlayId = btn.dataset.editPlay; renderGameDetail(g.id); };
   });
   document.querySelectorAll('[data-cancel-play]').forEach(btn => {
-    btn.onclick = () => { editingPlayId = null; renderGameDetail(g.id); };
+    btn.onclick = async () => {
+      const id = btn.dataset.cancelPlay;
+      if(id === insertedPlayId){
+        // A freshly inserted, not-yet-confirmed placeholder — remove it
+        // entirely rather than leaving its default stat behind.
+        const idx = (g.playLog||[]).findIndex(p => p.id === id);
+        if(idx !== -1){
+          applyPlayEffect(g, g.playLog[idx], -1);
+          g.playLog.splice(idx,1);
+        }
+        insertedPlayId = null;
+        editingPlayId = null;
+        const res = await saveJSON(gameKey(g.id), g);
+        gameCache[g.id] = g;
+        updateIndexSummaryFor(g);
+        await persistGamesIndex();
+        if(!res.ok) alert('Could not save: ' + res.error);
+        renderGameDetail(g.id);
+        return;
+      }
+      editingPlayId = null;
+      renderGameDetail(g.id);
+    };
   });
   document.querySelectorAll('[data-save-play]').forEach(btn => {
     btn.onclick = async () => {
@@ -2091,6 +2207,7 @@ async function renderGameDetail(gameId){
         play.field = newField;
         applyPlayEffect(g, play, 1);
       }
+      if(id === insertedPlayId) insertedPlayId = null;
       editingPlayId = null;
       const res = await saveJSON(gameKey(g.id), g);
       gameCache[g.id] = g;
@@ -2108,6 +2225,7 @@ async function renderGameDetail(gameId){
       if(idx === -1) return;
       applyPlayEffect(g, g.playLog[idx], -1);
       g.playLog.splice(idx,1);
+      if(id === insertedPlayId) insertedPlayId = null;
       const res = await saveJSON(gameKey(g.id), g);
       gameCache[g.id] = g;
       updateIndexSummaryFor(g);
@@ -2125,7 +2243,7 @@ async function renderGameDetail(gameId){
     delete gameCache[g.id];
     if(currentGame?.id === g.id){
       currentGame = null;
-      selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null; playLogSearchText = ''; playLogSearchType = 'all';
+      selectedPlayerId = null; showSubPicker = false; editingPlayId = null; insertedPlayId = null; playLogExpanded = false; lastSaveIssue = null; playLogSearchText = ''; playLogSearchType = 'all';
   boxScoreOpen = false; boxScoreSort = 'pts';
       activeGameId = null;
       await saveJSON(teamKey('active-game-id'), null);
@@ -2532,7 +2650,7 @@ function attachHandlers(){
     const quarterMinutes = document.getElementById('quarterMinInput').value;
     const otMinutes = document.getElementById('otMinInput').value;
     currentGame = newGame(opp, date, homeAway, quarterMinutes, otMinutes);
-    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null; playLogSearchText = ''; playLogSearchType = 'all';
+    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; insertedPlayId = null; playLogExpanded = false; lastSaveIssue = null; playLogSearchText = ''; playLogSearchType = 'all';
   boxScoreOpen = false; boxScoreSort = 'pts';
     activeGameId = currentGame.id;
     await saveJSON(teamKey('active-game-id'), activeGameId);
@@ -2689,11 +2807,40 @@ function attachHandlers(){
   };
 
   // Live: play-by-play edit/delete
+  document.querySelectorAll('[data-insert-above]').forEach(btn => {
+    btn.onclick = () => {
+      if(!canEditActiveTeam()) return;
+      const newPlay = insertPlayAbove(currentGame, btn.dataset.insertAbove);
+      if(!newPlay) return;
+      editingPlayId = newPlay.id;
+      insertedPlayId = newPlay.id;
+      queueSaveGame();
+      render();
+    };
+  });
   document.querySelectorAll('[data-edit-play]').forEach(btn => {
     btn.onclick = () => { editingPlayId = btn.dataset.editPlay; render(); };
   });
   document.querySelectorAll('[data-cancel-play]').forEach(btn => {
-    btn.onclick = () => { editingPlayId = null; render(); };
+    btn.onclick = () => {
+      const id = btn.dataset.cancelPlay;
+      if(id === insertedPlayId){
+        // A freshly inserted, not-yet-confirmed placeholder — remove it
+        // entirely rather than leaving its default stat behind.
+        const idx = (currentGame.playLog||[]).findIndex(p => p.id === id);
+        if(idx !== -1){
+          applyPlayEffect(currentGame, currentGame.playLog[idx], -1);
+          currentGame.playLog.splice(idx,1);
+        }
+        insertedPlayId = null;
+        editingPlayId = null;
+        queueSaveGame();
+        render();
+        return;
+      }
+      editingPlayId = null;
+      render();
+    };
   });
   document.querySelectorAll('[data-save-play]').forEach(btn => {
     btn.onclick = () => {
@@ -2729,6 +2876,7 @@ function attachHandlers(){
         play.field = newField;
         applyPlayEffect(currentGame, play, 1); // apply new effect
       }
+      if(id === insertedPlayId) insertedPlayId = null;
       editingPlayId = null;
       queueSaveGame();
       render();
@@ -2742,6 +2890,7 @@ function attachHandlers(){
       if(idx === -1) return;
       applyPlayEffect(currentGame, currentGame.playLog[idx], -1);
       currentGame.playLog.splice(idx,1);
+      if(id === insertedPlayId) insertedPlayId = null;
       queueSaveGame();
       render();
     };
@@ -2761,7 +2910,7 @@ function attachHandlers(){
     activeGameId = null;
     await saveJSON(teamKey('active-game-id'), null);
     currentGame = null;
-    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; playLogExpanded = false; lastSaveIssue = null; playLogSearchText = ''; playLogSearchType = 'all';
+    selectedPlayerId = null; showSubPicker = false; editingPlayId = null; insertedPlayId = null; playLogExpanded = false; lastSaveIssue = null; playLogSearchText = ''; playLogSearchType = 'all';
   boxScoreOpen = false; boxScoreSort = 'pts';
     setTab('history');
     renderGameDetail(finishedGameId); // jump straight to the final summary, not just the schedule list
