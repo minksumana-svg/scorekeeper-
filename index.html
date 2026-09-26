@@ -1528,19 +1528,30 @@ function render(){
 // Re-renders while preserving focus + cursor position on whichever input
 // triggered it — needed for the play-log search box, since a full render()
 // otherwise recreates the input element and kicks focus out after every
-// keystroke.
+// keystroke. renderFn may be sync (Live tab's render()) or async (History's
+// renderGameDetail(), which awaits loadGame() before replacing the DOM) —
+// restoring focus right away only works for the sync case; for the async
+// case the old input is still on screen when we'd restore focus, then the
+// real re-render lands a tick later and wipes it out again, which is why
+// typing in the History search box used to lose focus after every
+// keystroke. Waiting for renderFn's result (if it's a promise) before
+// restoring focus fixes both cases from one call site.
 function renderPreservingFocus(renderFn){
   const active = document.activeElement;
   const activeId = active && active.id;
   const selStart = active && typeof active.selectionStart === 'number' ? active.selectionStart : null;
-  renderFn();
-  if(activeId){
-    const el = document.getElementById(activeId);
-    if(el){
-      el.focus();
-      if(selStart !== null && el.setSelectionRange) el.setSelectionRange(selStart, selStart);
+  const restoreFocus = () => {
+    if(activeId){
+      const el = document.getElementById(activeId);
+      if(el){
+        el.focus();
+        if(selStart !== null && el.setSelectionRange) el.setSelectionRange(selStart, selStart);
+      }
     }
-  }
+  };
+  const result = renderFn();
+  if(result && typeof result.then === 'function') result.then(restoreFocus);
+  else restoreFocus();
 }
 
 /* ---------------------------------------------------------------
