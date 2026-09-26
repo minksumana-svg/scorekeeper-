@@ -1830,9 +1830,10 @@ function renderHistory(){
     ${rows.map(g => {
       const res = g.final ? (g.homeScore>g.awayScore?'W':(g.homeScore<g.awayScore?'L':'T')) : 'LIVE';
       const prefix = g.homeAway==='away' ? '@' : 'vs';
+      const haLabel = g.homeAway==='away' ? 'AWAY' : 'HOME';
       return `<div class="game-row" data-view-game="${g.id}">
         <div>
-          <div class="opp">${prefix} ${escapeHtml(g.opponent||'Opponent')}</div>
+          <div class="opp">${prefix} ${escapeHtml(g.opponent||'Opponent')} <span class="pill" style="background:var(--panel-2);color:var(--paper-dim); font-size:0.65rem; vertical-align:middle;">${haLabel}</span></div>
           <div class="date">${g.date||''}${g.excludeFromSeason ? ' · <span class="pill" style="background:var(--panel-2);color:var(--paper-dim);">Excluded</span>' : ''}</div>
         </div>
         <div class="res ${res}">${g.homeScore}–${g.awayScore} · ${res}</div>
@@ -2073,6 +2074,10 @@ async function renderGameDetail(gameId){
   <div class="card">
     <button class="backlink" id="closeDetail">← Back to schedule</button>
     <h2>${escapeHtml(currentTeamName())} ${prefix} ${escapeHtml(g.opponent||'Opponent')} — ${g.date||''} ${canEdit ? `<button class="icon-btn" id="editOpponentBtn" style="color:var(--wood-light); font-size:0.9rem; vertical-align:middle;" aria-label="Edit opponent name">✎</button>` : ''}</h2>
+    <div style="margin-bottom:0.6rem;">
+      <span class="pill" style="background:var(--panel-2);color:var(--paper-dim);">${g.homeAway==='away' ? 'AWAY game' : 'HOME game'}</span>
+      ${canEdit ? `<button class="icon-btn" id="editHomeAwayBtn" style="color:var(--wood-light); font-size:0.9rem; vertical-align:middle;" aria-label="Edit home/away">✎</button>` : ''}
+    </div>
     <div style="display:flex; gap:0.5rem; margin-bottom:0.9rem; flex-wrap:wrap;">
       <button class="btn secondary" id="shareGameBtn">🔗 Share game</button>
       ${canEdit ? `<button class="btn secondary" id="toggleExcludeBtn">${g.excludeFromSeason ? 'Include in season stats' : 'Exclude from season stats'}</button>
@@ -2124,6 +2129,18 @@ async function renderGameDetail(gameId){
     // render() rebuilds the schedule list behind this (with the corrected
     // "vs Opponent" headline) — renderGameDetail() alone only refreshes
     // this detail panel, leaving the already-drawn list row stale.
+    render();
+    renderGameDetail(g.id);
+  };
+  const editHomeAwayBtn = document.getElementById('editHomeAwayBtn');
+  if(editHomeAwayBtn) editHomeAwayBtn.onclick = async () => {
+    g.homeAway = g.homeAway === 'away' ? 'home' : 'away';
+    await saveJSON(gameKey(g.id), g);
+    const idxEntry = gamesIndex.find(entry => entry.id === g.id);
+    if(idxEntry){ idxEntry.homeAway = g.homeAway; await persistGamesIndex(); }
+    // render() rebuilds the schedule list behind this (with the corrected
+    // HOME/AWAY pill and vs/@ prefix) — renderGameDetail() alone only
+    // refreshes this detail panel, leaving the already-drawn list row stale.
     render();
     renderGameDetail(g.id);
   };
