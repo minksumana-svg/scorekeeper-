@@ -231,7 +231,7 @@
   }
   .modal-card{
     background:var(--panel); border:1px solid var(--wood); border-radius:14px;
-    padding:1rem; width:100%; max-width:820px; max-height:88vh; overflow:auto;
+    padding:1rem; width:100%; max-width:1600px; max-height:88vh; overflow:auto;
   }
   th[data-sort]{cursor:pointer; user-select:none; white-space:nowrap;}
   th[data-sort].sorted{color:var(--accent);}
@@ -259,8 +259,18 @@
   .pill{display:inline-block; padding:0.15rem 0.5rem; border-radius:999px; font-size:0.65rem; text-transform:uppercase; font-weight:700; letter-spacing:0.03em;}
   .section-label{font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--wood-light); margin:0.9rem 0 0.4rem;}
   .table-wrap{overflow-x:auto;}
-  .shot{display:inline-flex; flex-direction:column; align-items:center; line-height:1.15; white-space:nowrap;}
-  .shot-ma{font-size:0.7em; color:var(--paper-dim); font-weight:400;}
+  /* Box-score cards break out of main's 760px reading column and use the
+     full screen width (minus a 1rem gutter each side), up to 1600px — so a
+     wide stat table only scrolls when the device is genuinely too narrow. */
+  .wide-card{ margin-left:calc(50% - min(800px, 50vw - 1rem)); margin-right:calc(50% - min(800px, 50vw - 1rem)); }
+  table.box-table th, table.box-table td{ white-space:nowrap; }
+  /* Player column stays pinned while the numbers scroll, on screens too
+     narrow to fit everything. */
+  table.box-table th:first-child, table.box-table td:first-child{ position:sticky; left:0; z-index:1; background:var(--panel); white-space:normal; min-width:5rem; }
+  @media (max-width:1100px){
+    table.box-table{ font-size:0.74rem; }
+    table.box-table th, table.box-table td{ padding:0.35rem 0.25rem; }
+  }
   .shot-none{color:var(--paper-dim);}
   .backlink{background:none;border:none;color:var(--wood-light);font-weight:700;font-size:0.85rem;margin-bottom:0.7rem;padding:0;}
   .save-status{display:inline-block; font-size:0.75rem; margin-left:0.6rem; font-weight:600;}
@@ -1077,20 +1087,18 @@ function pct(made, att){ return att ? Math.round(100*made/att) : 0; }
 // Box-score shooting value: a percentage, or null when there were no attempts
 // (so "0 of 0" never looks the same as "0 of 5").
 function shotPct(made, att){ return att ? pct(made, att) : null; }
-// Box-score shooting cell: percentage with made/attempted underneath, or a
-// dash when the player never took that shot.
+// Box-score shooting cell: just the percentage, or a dash when the player
+// never took that shot.
 function shotCell(made, att){
-  return att
-    ? `<span class="shot">${pct(made,att)}%<span class="shot-ma">${made}/${att}</span></span>`
-    : `<span class="shot-none">—</span>`;
+  return att ? `${pct(made,att)}%` : `<span class="shot-none">—</span>`;
 }
 // Shared sort for every sortable box score. Null percentages (no attempts)
 // always sink below 0%; ties fall back to points.
 function sortBoxRows(rows, key){
   return rows.sort((a,b) => {
     if(key === 'name') return a.name.localeCompare(b.name);
-    if(key === 'fgLabel') return (b.fgm - a.fgm) || ((a.fga?0:1) - (b.fga?0:1)) || (a.fga - b.fga) || (b.pts - a.pts);
-    const av = a[key], bv = b[key];
+    const val = r => key === 'fgLabel' ? shotPct(r.fgm, r.fga) : r[key]; // FG column shows FG%, so sort by it
+    const av = val(a), bv = val(b);
     if(av == null && bv == null) return b.pts - a.pts;
     if(av == null) return 1;
     if(bv == null) return -1;
@@ -2029,7 +2037,7 @@ function boxScoreModalHtml(g){
         <button class="icon-btn" id="closeBoxScore" aria-label="Close" style="color:var(--paper-dim); font-size:1.3rem;">✕</button>
       </div>
       <div class="table-wrap">
-        <table>
+        <table class="box-table">
           <tr>${headerCells}</tr>
           ${bodyRows || `<tr><td colspan="18" style="text-align:center; color:var(--paper-dim); padding:1rem;">No players yet</td></tr>`}
         </table>
@@ -2076,9 +2084,9 @@ async function renderSharedGame(gameId){
     ${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}
     ${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
   </div>
-  <div class="card">
+  <div class="card wide-card">
     <h2>Box score — sorted by points</h2>
-    <div class="table-wrap"><table>
+    <div class="table-wrap"><table class="box-table">
       <tr><th>Player</th><th>PTS</th><th>2pts</th><th>3pts</th><th>ftpts</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>AST</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
       ${rows}
       ${totalsRows}
@@ -2122,13 +2130,17 @@ async function renderGameDetail(gameId){
     <div class="section-label">Team comparison — all categories</div>
     ${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}
     ${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
-    <div class="section-label">Box score — tap a header to sort</div>
-    <div class="table-wrap"><table>
+  </div>
+  <div class="card wide-card">
+    <h2>Box score — tap a header to sort</h2>
+    <div class="table-wrap"><table class="box-table">
       <tr>${historyHeaderCells}</tr>
       ${rows}
       ${totalsRows}
     </table></div>
-    <div class="section-label" style="display:flex; align-items:center; justify-content:space-between;">
+  </div>
+  <div class="card">
+    <div class="section-label" style="display:flex; align-items:center; justify-content:space-between; margin-top:0;">
       <span>Play-by-play (${(g.playLog||[]).length})</span>
       <button class="btn secondary" id="togglePlayLogBtn" style="padding:0.25rem 0.6rem; font-size:0.7rem;">${playLogExpanded ? 'Collapse' : 'Expand'}</button>
     </div>
@@ -2565,14 +2577,14 @@ async function renderSeason(){
 
   const excludedCount = gamesIndex.length - allGames.length;
   app.innerHTML = `
-  <div class="card">
+  <div class="card wide-card">
     <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
       <h2>${escapeHtml(currentTeamName())} — season totals</h2>
       <button class="btn secondary" id="shareSeasonBtn" style="flex-shrink:0;">🔗 Share season</button>
     </div>
     ${excludedCount > 0 ? `<div class="section-label" style="margin-top:-0.4rem;">${excludedCount} game${excludedCount===1?'':'s'} excluded from these totals</div>` : ''}
     ${allGames.length===0 ? `<div class="empty"><span class="ball">🏀</span>No games recorded yet this season.</div>` : `
-    <div class="table-wrap"><table>
+    <div class="table-wrap"><table class="box-table">
       <tr>${seasonHeaderCells}</tr>
       ${rows}
       ${seasonSummaryRows}
