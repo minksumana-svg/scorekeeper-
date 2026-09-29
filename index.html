@@ -85,6 +85,17 @@
   .btn:disabled{opacity:0.4; cursor:not-allowed;}
   .btn:focus-visible, button:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
 
+  details.share-team > summary{
+    list-style:none; cursor:pointer; display:flex; align-items:center; justify-content:space-between; gap:0.6rem;
+  }
+  details.share-team > summary::-webkit-details-marker{ display:none; }
+  details.share-team > summary h2{ margin:0; }
+  .share-summary-meta{ font-size:0.72rem; color:var(--paper-dim); margin-top:0.2rem; }
+  .share-chevron{ color:var(--wood-light); font-size:0.9rem; transition:transform 0.15s ease; flex-shrink:0; }
+  details.share-team[open] .share-chevron{ transform:rotate(90deg); }
+  details.share-team[open] > summary{ margin-bottom:0.8rem; }
+  .member-meta{ display:block; font-size:0.7rem; color:var(--paper-dim); font-weight:400; margin-top:0.15rem; }
+  .member-meta .wk{ color:var(--wood-light); }
   .player-list-item{
     display:flex; align-items:center; justify-content:space-between;
     padding:0.55rem 0.2rem; border-bottom:1px solid var(--court-line);
@@ -1480,8 +1491,85 @@ async function init(){
   render();
 }
 
+/* ---------------------------------------------------------------
+   ACCESS TRACKING — for the Sharing tab's "last accessed" and "visits
+   this week". Each signed-in member writes only their OWN doc at
+   teams/{teamId}/access/{uid}: { last, recent:[timestamps in the last
+   7 days], email, name }. Only the team owner reads the whole list.
+   A "visit" = opening the app on a team (or switching to it), counted at
+   most once per 30 minutes per team per device so re-renders and quick
+   tab-flips don't inflate it. Anonymous shared-link views aren't tracked.
+   Needs the Firestore rule in ACCESS_TRACKING_RULES.md — until that's
+   deployed the write just fails silently and nothing else is affected.
+--------------------------------------------------------------- */
+const ACCESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const ACCESS_THROTTLE_MS = 30 * 60 * 1000;
+async function recordTeamAccess(teamId){
+  const uid = writeUid();
+  if(!uid || !teamId || !navigator.onLine) return;
+  const throttleKey = 'sk_access_' + uid + '_' + teamId;
+  const now = Date.now();
+  try{
+    const lastLocal = parseInt(localStorage.getItem(throttleKey) || '0', 10);
+    if(now - lastLocal < ACCESS_THROTTLE_MS) return;
+  }catch(e){}
+  try{
+    const ref = doc(db, 'teams', teamId, 'access', uid);
+    const snap = await getDoc(ref);
+    const prev = snap.exists() ? (snap.data().recent || []) : [];
+    const recent = prev.filter(t => now - t < ACCESS_WINDOW_MS).concat(now).slice(-500);
+    await setDoc(ref, {
+      last: now, recent,
+      email: currentUser?.email || '', name: currentUser?.displayName || ''
+    }, { merge: true });
+    try{ localStorage.setItem(throttleKey, String(now)); }catch(e){}
+  }catch(e){
+    console.warn('access tracking not recorded (rules not deployed yet?)', e && e.code);
+  }
+}
+// Owner-only read of every member's access doc for one team.
+// Returns { ok, byUid:{uid:{last, weekCount}} }.
+async function loadTeamAccess(teamId){
+  try{
+    const snap = await getDocs(collection(db, 'teams', teamId, 'access'));
+    const now = Date.now(), byUid = {};
+    snap.docs.forEach(d => {
+      const data = d.data();
+      byUid[d.id] = {
+        last: data.last || null,
+        weekCount: (data.recent || []).filter(t => now - t < ACCESS_WINDOW_MS).length
+      };
+    });
+    return { ok:true, byUid };
+  }catch(e){
+    console.warn('could not load access info', teamId, e && e.code);
+    return { ok:false, byUid:{} };
+  }
+}
+// "Today 14:31", "Yesterday 09:10", "Mon 22 Sep, 18:02", "3 Jan 2025, 18:02"
+function fmtLastAccessed(ts){
+  if(!ts) return 'Never';
+  const d = new Date(ts), now = new Date();
+  const time = d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+  const startOfDay = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const dayDiff = Math.round((startOfDay(now) - startOfDay(d)) / 86400000);
+  if(dayDiff === 0) return `Today ${time}`;
+  if(dayDiff === 1) return `Yesterday ${time}`;
+  const opts = d.getFullYear() === now.getFullYear()
+    ? { weekday:'short', day:'numeric', month:'short' }
+    : { day:'numeric', month:'short', year:'numeric' };
+  return `${d.toLocaleDateString('en-GB', opts)}, ${time}`;
+}
+// Which team cards are expanded on the Sharing tab — a per-device preference.
+let sharingExpanded = new Set();
+try{ sharingExpanded = new Set(JSON.parse(localStorage.getItem('sk_sharing_expanded') || '[]')); }catch(e){}
+function saveSharingExpanded(){
+  try{ localStorage.setItem('sk_sharing_expanded', JSON.stringify([...sharingExpanded])); }catch(e){}
+}
+
 // (Re)loads roster/games/active-game for whichever team is currently selected.
 async function loadTeamData(){
+  recordTeamAccess(activeTeamId); // fire-and-forget; no-op for shared-link viewers
   const [rosterRes, gamesIndexRes, activeGameIdRes] = await Promise.all([
     loadJSON(teamKey('roster'), { players: [] }),
     loadJSON(teamKey('games-index'), []),
@@ -2418,22 +2506,53 @@ async function renderSharing(){
     return;
   }
 
+  // Access info for every owned team, fetched in parallel.
+  const accessList = await Promise.all(owned.map(t => loadTeamAccess(t.id)));
+  const accessByTeam = {};
+  owned.forEach((t, i) => accessByTeam[t.id] = accessList[i]);
+
+  const memberMetaHtml = (acc) => {
+    if(!acc || !acc.last) return `<span class="member-meta">Last accessed: never</span>`;
+    return `<span class="member-meta">Last accessed ${escapeHtml(fmtLastAccessed(acc.last))} · <span class="wk">${acc.weekCount}× in 7 days</span></span>`;
+  };
+
   app.innerHTML = owned.map(team => {
-    const memberUids = (team.memberUids||[]).filter(uid => uid !== team.ownerUid);
+    const access = accessByTeam[team.id];
+    const byUid = access.byUid;
+    const roleOf = uid => (team.roles||{})[uid] || 'view';
+    // Can edit first, then view only; within each, most recently accessed
+    // first (never-accessed at the bottom), then by name.
+    const memberUids = (team.memberUids||[])
+      .filter(uid => uid !== team.ownerUid)
+      .sort((a,b) => {
+        const ra = roleOf(a) === 'edit' ? 0 : 1, rb = roleOf(b) === 'edit' ? 0 : 1;
+        if(ra !== rb) return ra - rb;
+        const la = byUid[a]?.last || 0, lb = byUid[b]?.last || 0;
+        if(la !== lb) return lb - la;
+        const na = ((team.memberInfo||{})[a]?.name || (team.memberInfo||{})[a]?.email || '');
+        const nb = ((team.memberInfo||{})[b]?.name || (team.memberInfo||{})[b]?.email || '');
+        return na.localeCompare(nb);
+      });
+    const editCount = memberUids.filter(uid => roleOf(uid) === 'edit').length;
+    const viewCount = memberUids.length - editCount;
+    const activeThisWeek = [team.ownerUid, ...memberUids].filter(uid => (byUid[uid]?.weekCount || 0) > 0).length;
+
+    const ownerInfo = (team.memberInfo||{})[team.ownerUid] || {};
     const rows = [
       // Owner row first, always.
       `<div class="player-list-item">
-        <span class="player-name">${escapeHtml((team.memberInfo||{})[team.ownerUid]?.name || (team.memberInfo||{})[team.ownerUid]?.email || 'You')}
+        <span class="player-name">${escapeHtml(ownerInfo.name || ownerInfo.email || 'You')}
           <span class="pill" style="background:var(--wood); color:var(--ink);">Owner</span>
+          ${memberMetaHtml(byUid[team.ownerUid])}
         </span>
       </div>`,
       ...memberUids.map(uid => {
         const info = (team.memberInfo||{})[uid] || {};
         const label = info.name || info.email || uid.slice(0,8);
-        const role = (team.roles||{})[uid] || 'view';
+        const role = roleOf(uid);
         return `<div class="player-list-item" data-member-row="${escapeAttr(uid)}" data-team-id="${escapeAttr(team.id)}">
-          <span class="player-name">${escapeHtml(label)}</span>
-          <span style="display:flex; align-items:center; gap:0.4rem;">
+          <span class="player-name">${escapeHtml(label)}${memberMetaHtml(byUid[uid])}</span>
+          <span style="display:flex; align-items:center; gap:0.4rem; flex-shrink:0;">
             <select class="role-select" data-set-role="${escapeAttr(uid)}" data-team-id="${escapeAttr(team.id)}" style="width:auto; margin:0; padding:0.3rem 0.5rem; font-size:0.75rem;">
               <option value="edit" ${role==='edit'?'selected':''}>Can edit</option>
               <option value="view" ${role==='view'?'selected':''}>View only</option>
@@ -2444,16 +2563,31 @@ async function renderSharing(){
       })
     ];
     return `
-    <div class="card">
-      <h2>${escapeHtml(team.name)}</h2>
+    <details class="card share-team" data-share-team="${escapeAttr(team.id)}" ${sharingExpanded.has(team.id) ? 'open' : ''}>
+      <summary>
+        <div>
+          <h2>${escapeHtml(team.name)}</h2>
+          <div class="share-summary-meta">${memberUids.length + 1} with access · ${editCount} can edit · ${viewCount} view only${access.ok ? ` · ${activeThisWeek} active in last 7 days` : ''}</div>
+        </div>
+        <span class="share-chevron" aria-hidden="true">▶</span>
+      </summary>
       <div class="row">
         <button class="btn secondary" data-invite="${escapeAttr(team.id)}" data-role="edit">🔗 Invite — can edit</button>
         <button class="btn secondary" data-invite="${escapeAttr(team.id)}" data-role="view">🔗 Invite — view only</button>
       </div>
       <div class="section-label" style="margin-top:0.9rem;">Has access (${memberUids.length + 1})</div>
+      ${access.ok ? '' : `<div class="empty" style="padding:0.3rem 0 0.6rem; text-align:left; font-size:0.75rem;">⚠️ Access history isn't available yet — the Firestore rule for access tracking needs deploying.</div>`}
       ${rows.join('')}
-    </div>`;
+    </details>`;
   }).join('');
+
+  // Remember which teams are expanded (per device) without re-fetching anything.
+  document.querySelectorAll('details[data-share-team]').forEach(el => {
+    el.addEventListener('toggle', () => {
+      if(el.open) sharingExpanded.add(el.dataset.shareTeam); else sharingExpanded.delete(el.dataset.shareTeam);
+      saveSharingExpanded();
+    });
+  });
 
   // Invite buttons — generate the right link for edit vs. view access.
   document.querySelectorAll('[data-invite]').forEach(btn => {
@@ -2473,6 +2607,7 @@ async function renderSharing(){
       const res = await setMemberRole(sel.dataset.teamId, sel.dataset.setRole, sel.value);
       if(!res){ /* updateDoc resolves undefined on success — nothing to check */ }
       if(sel.dataset.teamId === activeTeamId) teams = await loadMyTeams(); // refresh in case it's the active team
+      renderSharing(); // re-sort: can-edit members are listed first
     };
   });
   // Remove a member entirely.
