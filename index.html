@@ -231,7 +231,7 @@
   }
   .modal-card{
     background:var(--panel); border:1px solid var(--wood); border-radius:14px;
-    padding:1rem; width:100%; max-width:1600px; max-height:88vh; overflow:auto;
+    padding:1rem; width:100%; max-width:820px; max-height:88vh; overflow:auto;
   }
   th[data-sort]{cursor:pointer; user-select:none; white-space:nowrap;}
   th[data-sort].sorted{color:var(--accent);}
@@ -259,19 +259,6 @@
   .pill{display:inline-block; padding:0.15rem 0.5rem; border-radius:999px; font-size:0.65rem; text-transform:uppercase; font-weight:700; letter-spacing:0.03em;}
   .section-label{font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--wood-light); margin:0.9rem 0 0.4rem;}
   .table-wrap{overflow-x:auto;}
-  /* Box-score cards break out of main's 760px reading column and use the
-     full screen width (minus a 1rem gutter each side), up to 1600px — so a
-     wide stat table only scrolls when the device is genuinely too narrow. */
-  .wide-card{ margin-left:calc(50% - min(800px, 50vw - 1rem)); margin-right:calc(50% - min(800px, 50vw - 1rem)); }
-  table.box-table th, table.box-table td{ white-space:nowrap; }
-  /* Player column stays pinned while the numbers scroll, on screens too
-     narrow to fit everything. */
-  table.box-table th:first-child, table.box-table td:first-child{ position:sticky; left:0; z-index:1; background:var(--panel); white-space:normal; min-width:5rem; }
-  @media (max-width:1100px){
-    table.box-table{ font-size:0.74rem; }
-    table.box-table th, table.box-table td{ padding:0.35rem 0.25rem; }
-  }
-  .shot-none{color:var(--paper-dim);}
   .backlink{background:none;border:none;color:var(--wood-light);font-weight:700;font-size:0.85rem;margin-bottom:0.7rem;padding:0;}
   .save-status{display:inline-block; font-size:0.75rem; margin-left:0.6rem; font-weight:600;}
   .save-status.ok{color:var(--make);}
@@ -430,6 +417,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection, query, where, getDocs, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
 /* ---------------------------------------------------------------
    STORAGE HELPERS — Firestore as the source of truth, with a
@@ -456,6 +444,12 @@ const fbApp = initializeApp(firebaseConfig);
 const db = getFirestore(fbApp);
 const auth = getAuth(fbApp);
 const googleProvider = new GoogleAuthProvider();
+// Backs the AI game-summary feature — calls a Cloud Function (see
+// /functions/index.js) that holds the Anthropic API key server-side and
+// checks the caller's Firebase Auth email itself, so the key is never
+// exposed in this client-side file and the feature can't be triggered by
+// anyone but ADMIN_EMAIL even if someone reads this source.
+const fbFunctions = getFunctions(fbApp);
 
 const storageAvailable = true;
 
@@ -648,6 +642,8 @@ let editingPlayId = null; // play-by-play entry currently being edited
 let insertedPlayId = null; // a play just created via "insert above" and not yet confirmed — Cancel deletes it instead of just closing the editor
 let playLogSearchText = ''; // filters the play-by-play list by player name
 let playLogSearchType = 'all'; // filters the play-by-play list by action type
+let aiSummaryLoadingFor = null; // gameId currently awaiting an AI summary response, or null
+let aiSummaryError = null;      // last AI summary error message to show, or null
 let editingPlayerId = null; // roster player currently being edited inline
 let playLogExpanded = false; // whether the play-by-play list is expanded
 let lastSaveIssue = null; // null | 'offline' | 'error' — drives the live-game save banner across re-renders
@@ -1084,28 +1080,6 @@ function aggregateTeamStats(game, isHome){
   return totals;
 }
 function pct(made, att){ return att ? Math.round(100*made/att) : 0; }
-// Box-score shooting value: a percentage, or null when there were no attempts
-// (so "0 of 0" never looks the same as "0 of 5").
-function shotPct(made, att){ return att ? pct(made, att) : null; }
-// Box-score shooting cell: just the percentage, or a dash when the player
-// never took that shot.
-function shotCell(made, att){
-  return att ? `${pct(made,att)}%` : `<span class="shot-none">—</span>`;
-}
-// Shared sort for every sortable box score. Null percentages (no attempts)
-// always sink below 0%; ties fall back to points.
-function sortBoxRows(rows, key){
-  return rows.sort((a,b) => {
-    if(key === 'name') return a.name.localeCompare(b.name);
-    const val = r => key === 'fgLabel' ? shotPct(r.fgm, r.fga) : r[key]; // FG column shows FG%, so sort by it
-    const av = val(a), bv = val(b);
-    if(av == null && bv == null) return b.pts - a.pts;
-    if(av == null) return 1;
-    if(bv == null) return -1;
-    return (bv - av) || (b.pts - a.pts);
-  });
-}
-function fmtPlusMinus(v){ return `${v>=0?'+':''}${v}`; }
 // Shared category list so the table and bar chart always agree.
 function comparisonRows(game){
   const h = aggregateTeamStats(game, true), a = aggregateTeamStats(game, false);
@@ -1969,37 +1943,31 @@ function computePlayerBoxRows(g){
     const pts2 = fgm2*2, pts3 = fgm3*3, ptsFt = ftm;
     return {
       id:p.id, name:p.name, pts, pts2, pts3, ptsFt, fgm, fga, fgm2, fga2, fgm3, fga3, ftm, fta,
-      fg2pct: shotPct(fgm2,fga2), fg3pct: shotPct(fgm3,fga3), ftpct: shotPct(ftm,fta),
+      fgpct: pct(fgm,fga), fg2pct: pct(fgm2,fga2), fg3pct: pct(fgm3,fga3), ftpct: pct(ftm,fta),
       oreb, dreb, ast, stl, blk, to, fouls, sec, plusMinus
     };
   }).filter(Boolean);
 }
-// One player's per-game box-score cells — used by Live popup, History and shared report.
-function boxRowHtml(r){
-  return `<tr>
-    <td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.pts2}</td><td>${r.pts3}</td><td>${r.ptsFt}</td>
-    <td>${shotCell(r.fgm,r.fga)}</td><td>${shotCell(r.fgm2,r.fga2)}</td><td>${shotCell(r.fgm3,r.fga3)}</td><td>${shotCell(r.ftm,r.fta)}</td>
-    <td>${r.oreb}</td><td>${r.dreb}</td><td>${r.ast}</td><td>${r.stl}</td><td>${r.blk}</td>
-    <td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${fmtPlusMinus(r.plusMinus)}</td>
-  </tr>`;
-}
-// Bold team-total row for a per-game box score (t = aggregateTeamStats output).
-function boxTotalRowHtml(label, t, withTopBorder){
-  const pts = t.fgm2*2 + t.fgm3*3 + t.ftm;
-  return `<tr style="font-weight:700;${withTopBorder?' border-top:2px solid var(--wood);':''}">
-    <td>${escapeHtml(label)} Total</td><td>${pts}</td><td>${t.fgm2*2}</td><td>${t.fgm3*3}</td><td>${t.ftm}</td>
-    <td>${shotCell(t.fgm2+t.fgm3, t.fga2+t.fga3)}</td><td>${shotCell(t.fgm2,t.fga2)}</td><td>${shotCell(t.fgm3,t.fga3)}</td><td>${shotCell(t.ftm,t.fta)}</td>
-    <td>${t.oreb}</td><td>${t.dreb}</td><td>${t.ast}</td><td>${t.stl}</td><td>${t.blk}</td><td>${t.to}</td><td>${t.fouls}</td><td>—</td><td>—</td>
-  </tr>`;
-}
 // Builds the sorted box-score rows + bolded team-total rows — shared by the
 // History detail view and the standalone shared-game report.
 function buildBoxScore(g){
-  const playerRows = sortBoxRows(computePlayerBoxRows(g), 'pts'); // descending by points
-  const rows = playerRows.map(boxRowHtml).join('');
-  const totalsRows =
-    boxTotalRowHtml(currentTeamName(), aggregateTeamStats(g, true), true) +
-    boxTotalRowHtml(g.opponent||'Opponent', aggregateTeamStats(g, false), false);
+  const playerRows = computePlayerBoxRows(g).sort((a,b) => b.pts - a.pts); // descending by points
+
+  const rows = playerRows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.pts2}</td><td>${r.pts3}</td><td>${r.ptsFt}</td><td>${r.fgm}/${r.fga}</td><td>${r.fgpct}%</td><td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td><td>${r.oreb}</td><td>${r.dreb}</td><td>${r.ast}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td></tr>`).join('');
+
+  const teamTotals = aggregateTeamStats(g, true);
+  const oppTotals = aggregateTeamStats(g, false);
+  const teamPts = teamTotals.fgm2*2 + teamTotals.fgm3*3 + teamTotals.ftm;
+  const oppPts = oppTotals.fgm2*2 + oppTotals.fgm3*3 + oppTotals.ftm;
+  const teamFgm = teamTotals.fgm2+teamTotals.fgm3, teamFga = teamTotals.fga2+teamTotals.fga3;
+  const oppFgm = oppTotals.fgm2+oppTotals.fgm3, oppFga = oppTotals.fga2+oppTotals.fga3;
+  const totalsRows = `
+    <tr style="font-weight:700; border-top:2px solid var(--wood);">
+      <td>${escapeHtml(currentTeamName())} Total</td><td>${teamPts}</td><td>${teamTotals.fgm2*2}</td><td>${teamTotals.fgm3*3}</td><td>${teamTotals.ftm}</td><td>${teamFgm}/${teamFga}</td><td>${pct(teamFgm,teamFga)}%</td><td>${pct(teamTotals.fgm2,teamTotals.fga2)}%</td><td>${pct(teamTotals.fgm3,teamTotals.fga3)}%</td><td>${pct(teamTotals.ftm,teamTotals.fta)}%</td><td>${teamTotals.oreb}</td><td>${teamTotals.dreb}</td><td>${teamTotals.ast}</td><td>${teamTotals.stl}</td><td>${teamTotals.blk}</td><td>${teamTotals.to}</td><td>${teamTotals.fouls}</td><td>—</td><td>—</td>
+    </tr>
+    <tr style="font-weight:700;">
+      <td>${escapeHtml(g.opponent||'Opponent')} Total</td><td>${oppPts}</td><td>${oppTotals.fgm2*2}</td><td>${oppTotals.fgm3*3}</td><td>${oppTotals.ftm}</td><td>${oppFgm}/${oppFga}</td><td>${pct(oppFgm,oppFga)}%</td><td>${pct(oppTotals.fgm2,oppTotals.fga2)}%</td><td>${pct(oppTotals.fgm3,oppTotals.fga3)}%</td><td>${pct(oppTotals.ftm,oppTotals.fta)}%</td><td>${oppTotals.oreb}</td><td>${oppTotals.dreb}</td><td>${oppTotals.ast}</td><td>${oppTotals.stl}</td><td>${oppTotals.blk}</td><td>${oppTotals.to}</td><td>${oppTotals.fouls}</td><td>—</td><td>—</td>
+    </tr>`;
   return { rows, totalsRows };
 }
 // Sortable box-score popup for the Live tab — tap a header to sort by it.
@@ -2010,6 +1978,7 @@ const BOX_MODAL_COLUMNS = [
   { key:'pts3', label:'3pts' },
   { key:'ptsFt', label:'ftpts' },
   { key:'fgLabel', label:'FG' },
+  { key:'fgpct', label:'FG%' },
   { key:'fg2pct', label:'2P%' },
   { key:'fg3pct', label:'3P%' },
   { key:'ftpct', label:'FT%' },
@@ -2024,11 +1993,21 @@ const BOX_MODAL_COLUMNS = [
   { key:'plusMinus', label:'+/-' },
 ];
 function boxScoreModalHtml(g){
-  const rows = sortBoxRows(computePlayerBoxRows(g), boxScoreSort);
+  const rows = computePlayerBoxRows(g).sort((a,b) => {
+    if(boxScoreSort === 'name') return a.name.localeCompare(b.name);
+    if(boxScoreSort === 'fgLabel') return b.fgm - a.fgm;
+    return (b[boxScoreSort]||0) - (a[boxScoreSort]||0);
+  });
   const headerCells = BOX_MODAL_COLUMNS.map(c =>
     `<th data-sort="${c.key}" class="${boxScoreSort===c.key?'sorted':''}">${c.label}${boxScoreSort===c.key?' ▾':''}</th>`
   ).join('');
-  const bodyRows = rows.map(boxRowHtml).join('');
+  const bodyRows = rows.map(r => `<tr>
+    <td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.pts2}</td><td>${r.pts3}</td><td>${r.ptsFt}</td><td>${r.fgm}/${r.fga}</td><td>${r.fgpct}%</td>
+    <td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td>
+    <td>${r.oreb}</td><td>${r.dreb}</td><td>${r.ast}</td><td>${r.stl}</td><td>${r.blk}</td>
+    <td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td>
+    <td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td>
+  </tr>`).join('');
   return `
   <div class="modal-backdrop" id="boxScoreBackdrop">
     <div class="modal-card">
@@ -2037,9 +2016,9 @@ function boxScoreModalHtml(g){
         <button class="icon-btn" id="closeBoxScore" aria-label="Close" style="color:var(--paper-dim); font-size:1.3rem;">✕</button>
       </div>
       <div class="table-wrap">
-        <table class="box-table">
+        <table>
           <tr>${headerCells}</tr>
-          ${bodyRows || `<tr><td colspan="18" style="text-align:center; color:var(--paper-dim); padding:1rem;">No players yet</td></tr>`}
+          ${bodyRows || `<tr><td colspan="19" style="text-align:center; color:var(--paper-dim); padding:1rem;">No players yet</td></tr>`}
         </table>
       </div>
     </div>
@@ -2057,6 +2036,95 @@ function buildQuarterTable(g){
   const oppTag = g.homeAway==='away' ? 'Home' : 'Away';
   return { quarterTable, prefix, usTag, oppTag };
 }
+
+/* ---------------------------------------------------------------
+   AI GAME SUMMARY — a per-game, on-demand written analysis (narrative +
+   SWOT + "what to work on") generated by an LLM from that game's box
+   score and play-by-play log. Generation is restricted to ADMIN_EMAIL
+   (see isAdminUser()) both here and, more importantly, inside the Cloud
+   Function itself (see /functions/index.js) — the Anthropic API key
+   never touches this client-side file. The result is cached on the game
+   doc (game.aiSummary) so it's generated once per game, not recomputed
+   on every view, and anyone who can view the game (including a shared
+   read-only link) sees whatever summary already exists there.
+--------------------------------------------------------------- */
+// Trims a game's derived stats + play-by-play down to what the model
+// needs — no raw Firestore doc, no internal ids, nothing more than what
+// a coach would actually hand a human analyst.
+function buildGameAnalysisPayload(g){
+  const boxScore = computePlayerBoxRows(g).sort((a,b)=>b.pts-a.pts).map(r => ({
+    name: r.name, pts: r.pts, pts2: r.pts2, pts3: r.pts3, ptsFt: r.ptsFt,
+    fgm: r.fgm, fga: r.fga, fgpct: r.fgpct, fg2pct: r.fg2pct, fg3pct: r.fg3pct, ftpct: r.ftpct,
+    oreb: r.oreb, dreb: r.dreb, ast: r.ast, stl: r.stl, blk: r.blk, to: r.to, fouls: r.fouls,
+    minutes: Math.round(((r.sec||0)/60)*10)/10, plusMinus: r.plusMinus
+  }));
+  const rawTeamTotals = aggregateTeamStats(g, true);
+  const rawOppTotals = aggregateTeamStats(g, false);
+  const withPct = (t) => ({ ...t,
+    pts: t.fgm2*2 + t.fgm3*3 + t.ftm,
+    fgpct: pct(t.fgm2+t.fgm3, t.fga2+t.fga3),
+    fg2pct: pct(t.fgm2,t.fga2), fg3pct: pct(t.fgm3,t.fga3), ftpct: pct(t.ftm,t.fta)
+  });
+  const marks = scoreProgressionPoints(g).filter(p => p.isQuarterEnd);
+  const quarterBreakdown = marks.map(p => ({ quarter: QLABELS[p.quarter] || p.quarter, teamPts: p.quarterHome, oppPts: p.quarterAway }));
+  const playByPlay = (g.playLog || []).map(p => ({
+    quarter: QLABELS[p.quarter] || p.quarter,
+    clock: fmtClock(p.clockAtPlay),
+    player: p.playerId === 'OPPONENT' ? (g.opponent || 'Opponent') : p.playerName,
+    action: isSubPlay(p) ? (p.field === 'sub_in' ? 'Sub in' : 'Sub out') : (FIELD_LABELS[p.field] || p.field)
+  }));
+  return {
+    teamName: currentTeamName(), opponent: g.opponent || 'Opponent', date: g.date || '',
+    homeAway: g.homeAway === 'away' ? 'Away' : 'Home',
+    finalScoreTeam: homeScore(g), finalScoreOpp: awayScore(g),
+    quarterBreakdown, teamTotals: withPct(rawTeamTotals), oppTotals: withPct(rawOppTotals),
+    boxScore, playByPlay
+  };
+}
+// Renders the AI summary card — placed just above the play-by-play
+// section in the History game detail view. Handles the three states:
+// nothing generated yet, in flight, and a cached result.
+function renderAiSummaryHtml(g){
+  const canGenerate = isAdminUser();
+  const loading = aiSummaryLoadingFor === g.id;
+  const s = g.aiSummary;
+  const genBtn = canGenerate
+    ? `<button class="btn secondary" id="genAiSummaryBtn" style="padding:0.25rem 0.6rem; font-size:0.7rem;" ${loading?'disabled':''}>${loading ? 'Analyzing…' : (s ? 'Regenerate' : 'Generate')}</button>`
+    : '';
+  const errorHtml = (!loading && aiSummaryError) ? `<div class="storage-banner show" style="margin-top:0.6rem;">⚠️ ${escapeHtml(aiSummaryError)}</div>` : '';
+  const bulletList = (arr) => (arr && arr.length)
+    ? `<ul style="margin:0.3rem 0 0; padding-left:1.1rem;">${arr.map(x=>`<li style="margin-bottom:0.25rem;">${escapeHtml(x)}</li>`).join('')}</ul>`
+    : `<div style="color:var(--paper-dim); font-size:0.85rem;">—</div>`;
+  let body;
+  if(loading){
+    body = `<div class="empty" style="padding:0.75rem 0;">Analyzing the box score and play-by-play… this can take a few seconds.</div>`;
+  } else if(!s){
+    body = `<div class="empty" style="padding:0.75rem 0;">${canGenerate ? 'No summary yet for this game — tap Generate to analyze the box score and play-by-play.' : 'No AI summary has been generated for this game yet.'}</div>`;
+  } else {
+    const genDate = s.generatedAt ? new Date(s.generatedAt).toLocaleString() : '';
+    body = `
+      <p style="margin:0.2rem 0 0.9rem 0;">${escapeHtml(s.summary || '')}</p>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.9rem 1.2rem;">
+        <div><strong style="color:var(--accent);">Strengths</strong>${bulletList(s.strengths)}</div>
+        <div><strong style="color:var(--away-accent);">Weaknesses</strong>${bulletList(s.weaknesses)}</div>
+        <div><strong style="color:var(--accent);">Opportunities</strong>${bulletList(s.opportunities)}</div>
+        <div><strong style="color:var(--away-accent);">Threats</strong>${bulletList(s.threats)}</div>
+      </div>
+      <div class="section-label" style="margin-top:0.9rem;">What to work on</div>
+      ${bulletList(s.focusAreas)}
+      ${genDate ? `<div style="color:var(--paper-dim); font-size:0.7rem; margin-top:0.6rem;">Generated ${escapeHtml(genDate)}${s.model ? ' · ' + escapeHtml(s.model) : ''}</div>` : ''}
+    `;
+  }
+  return `
+    <div class="section-label" style="display:flex; align-items:center; justify-content:space-between;">
+      <span>🤖 AI game summary</span>
+      ${genBtn}
+    </div>
+    ${body}
+    ${errorHtml}
+  `;
+}
+
 // Standalone read-only report for a shared game link — no nav, no tabs, no
 // edit controls, just the four sections that were asked for.
 async function renderSharedGame(gameId){
@@ -2084,10 +2152,10 @@ async function renderSharedGame(gameId){
     ${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}
     ${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
   </div>
-  <div class="card wide-card">
+  <div class="card">
     <h2>Box score — sorted by points</h2>
-    <div class="table-wrap"><table class="box-table">
-      <tr><th>Player</th><th>PTS</th><th>2pts</th><th>3pts</th><th>ftpts</th><th>FG</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>AST</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
+    <div class="table-wrap"><table>
+      <tr><th>Player</th><th>PTS</th><th>2pts</th><th>3pts</th><th>ftpts</th><th>FG</th><th>FG%</th><th>2P%</th><th>3P%</th><th>FT%</th><th>OREB</th><th>DREB</th><th>AST</th><th>STL</th><th>BLK</th><th>TO</th><th>FLS</th><th>MIN</th><th>+/-</th></tr>
       ${rows}
       ${totalsRows}
     </table></div>
@@ -2102,11 +2170,18 @@ async function renderGameDetail(gameId){
   }
   const canEdit = canEditActiveTeam();
   const { totalsRows } = buildBoxScore(g); // still used for the fixed totals footer
-  const sortedBoxRows = sortBoxRows(computePlayerBoxRows(g), historyBoxSort);
+  const sortedBoxRows = computePlayerBoxRows(g).sort((a,b) => {
+    if(historyBoxSort === 'name') return a.name.localeCompare(b.name);
+    if(historyBoxSort === 'fgLabel') return b.fgm - a.fgm;
+    return (b[historyBoxSort]||0) - (a[historyBoxSort]||0);
+  });
   const historyHeaderCells = BOX_MODAL_COLUMNS.map(c =>
     `<th data-sort="${c.key}" data-sort-target="history" class="${historyBoxSort===c.key?'sorted':''}">${c.label}${historyBoxSort===c.key?' ▾':''}</th>`
   ).join('');
-  const rows = sortedBoxRows.map(boxRowHtml).join('');
+  const rows = sortedBoxRows.map(r => `<tr>
+      <td>${escapeHtml(r.name)}</td><td>${r.pts}</td><td>${r.pts2}</td><td>${r.pts3}</td><td>${r.ptsFt}</td><td>${r.fgm}/${r.fga}</td><td>${r.fgpct}%</td><td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td>
+      <td>${r.oreb}</td><td>${r.dreb}</td><td>${r.ast}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td>
+    </tr>`).join('');
   const { quarterTable, prefix, usTag, oppTag } = buildQuarterTable(g);
 
   box.innerHTML = `
@@ -2130,23 +2205,39 @@ async function renderGameDetail(gameId){
     <div class="section-label">Team comparison — all categories</div>
     ${comparisonTableHtml(g, currentTeamName(), g.opponent||'Opponent')}
     ${comparisonBarChartHtml(g, currentTeamName(), g.opponent||'Opponent')}
-  </div>
-  <div class="card wide-card">
-    <h2>Box score — tap a header to sort</h2>
-    <div class="table-wrap"><table class="box-table">
+    <div class="section-label">Box score — tap a header to sort</div>
+    <div class="table-wrap"><table>
       <tr>${historyHeaderCells}</tr>
       ${rows}
       ${totalsRows}
     </table></div>
-  </div>
-  <div class="card">
-    <div class="section-label" style="display:flex; align-items:center; justify-content:space-between; margin-top:0;">
+    ${renderAiSummaryHtml(g)}
+    <div class="section-label" style="display:flex; align-items:center; justify-content:space-between;">
       <span>Play-by-play (${(g.playLog||[]).length})</span>
       <button class="btn secondary" id="togglePlayLogBtn" style="padding:0.25rem 0.6rem; font-size:0.7rem;">${playLogExpanded ? 'Collapse' : 'Expand'}</button>
     </div>
     ${playLogExpanded ? playLogHtml(g, !canEdit) : ''}
   </div>`;
 
+  const genAiSummaryBtn = document.getElementById('genAiSummaryBtn');
+  if(genAiSummaryBtn) genAiSummaryBtn.onclick = async () => {
+    aiSummaryLoadingFor = g.id; aiSummaryError = null;
+    renderGameDetail(g.id);
+    try{
+      const payload = buildGameAnalysisPayload(g);
+      const generateGameSummary = httpsCallable(fbFunctions, 'generateGameSummary');
+      const res = await generateGameSummary(payload);
+      g.aiSummary = res.data;
+      await saveJSON(gameKey(g.id), g);
+      gameCache[g.id] = g;
+    }catch(e){
+      console.error('AI summary generation failed', e);
+      aiSummaryError = (e && e.message) ? e.message : 'Something went wrong generating the summary.';
+    }finally{
+      aiSummaryLoadingFor = null;
+      renderGameDetail(g.id);
+    }
+  };
   document.getElementById('togglePlayLogBtn').onclick = () => { playLogExpanded = !playLogExpanded; renderGameDetail(g.id); };
   document.querySelectorAll('[data-sort-target="history"]').forEach(th => {
     th.onclick = () => { historyBoxSort = th.dataset.sort; renderGameDetail(g.id); };
@@ -2311,7 +2402,10 @@ async function renderGameDetail(gameId){
     document.getElementById('gameDetail').innerHTML = '';
     render();
   };
-  document.getElementById('closeDetail').onclick = () => { document.getElementById('gameDetail').innerHTML=''; };
+  document.getElementById('closeDetail').onclick = () => {
+    document.getElementById('gameDetail').innerHTML='';
+    aiSummaryLoadingFor = null; aiSummaryError = null;
+  };
 }
 
 /* ---------------------------------------------------------------
@@ -2514,43 +2608,39 @@ async function renderSeason(){
     });
   });
 
-  // Same columns as the History box score, plus season-only GP / PPG / REB / MPG.
   const SEASON_COLUMNS = [
-    { key:'name', label:'Player' }, { key:'gp', label:'GP' },
-    { key:'pts', label:'PTS' }, { key:'ppg', label:'PPG' },
-    { key:'pts2', label:'2pts' }, { key:'pts3', label:'3pts' }, { key:'ptsFt', label:'ftpts' },
-    { key:'fgLabel', label:'FG' }, { key:'fg2pct', label:'2P%' }, { key:'fg3pct', label:'3P%' }, { key:'ftpct', label:'FT%' },
-    { key:'oreb', label:'OREB' }, { key:'dreb', label:'DREB' }, { key:'reb', label:'REB' },
-    { key:'ast', label:'AST' }, { key:'stl', label:'STL' }, { key:'blk', label:'BLK' },
-    { key:'to', label:'TO' }, { key:'fouls', label:'FLS' },
-    { key:'sec', label:'MIN' }, { key:'mpg', label:'MPG' }, { key:'plusMinus', label:'+/-' },
+    { key:'name', label:'Player' }, { key:'gp', label:'GP' }, { key:'pts', label:'PTS' },
+    { key:'ppg', label:'PPG' }, { key:'reb', label:'REB' }, { key:'ast', label:'AST' },
+    { key:'stl', label:'STL' }, { key:'blk', label:'BLK' }, { key:'to', label:'TO' },
+    { key:'fouls', label:'FLS' }, { key:'fg2pct', label:'2P%' }, { key:'fg3pct', label:'3P%' },
+    { key:'ftpct', label:'FT%' }, { key:'mpg', label:'MPG' }, { key:'plusMinus', label:'+/-' },
   ];
   const playerRows = roster.players
     .filter(p => totals[p.id]) // guard against stray ids
     .map(p => {
       const t = totals[p.id];
       const gp = t.games.size || 0;
+      const ppg = gp ? t.pts/gp : 0;
+      const fg2pct = t.fga2 ? Math.round(100*t.fgm2/t.fga2) : 0;
+      const fg3pct = t.fga3 ? Math.round(100*t.fgm3/t.fga3) : 0;
+      const ftpct = t.fta ? Math.round(100*t.ftm/t.fta) : 0;
+      const mpg = gp ? Math.round(t.seconds/gp) : 0; // seconds — formatted at render time
       return {
-        name: p.name, gp, pts: t.pts, ppg: gp ? t.pts/gp : 0,
-        pts2: t.fgm2*2, pts3: t.fgm3*3, ptsFt: t.ftm,
-        fgm: t.fgm2+t.fgm3, fga: t.fga2+t.fga3, fgm2: t.fgm2, fga2: t.fga2, fgm3: t.fgm3, fga3: t.fga3, ftm: t.ftm, fta: t.fta,
-        fg2pct: shotPct(t.fgm2,t.fga2), fg3pct: shotPct(t.fgm3,t.fga3), ftpct: shotPct(t.ftm,t.fta),
-        oreb: t.oreb, dreb: t.dreb, reb: t.oreb+t.dreb, ast: t.ast, stl: t.stl, blk: t.blk,
-        to: t.to, fouls: t.fouls, sec: t.seconds,
-        mpg: gp ? Math.round(t.seconds/gp) : 0, // seconds — formatted at render time
-        plusMinus: t.plusMinus
+        name: p.name, gp, pts: t.pts, ppg, reb: t.oreb+t.dreb, ast: t.ast, stl: t.stl, blk: t.blk,
+        to: t.to, fouls: t.fouls, fg2pct, fg3pct, ftpct, mpg, plusMinus: t.plusMinus
       };
     });
-  const sortedPlayerRows = sortBoxRows([...playerRows], seasonBoxSort);
+  const sortedPlayerRows = [...playerRows].sort((a,b) => {
+    if(seasonBoxSort === 'name') return a.name.localeCompare(b.name);
+    return (b[seasonBoxSort]||0) - (a[seasonBoxSort]||0);
+  });
   const seasonHeaderCells = SEASON_COLUMNS.map(c =>
     `<th data-sort="${c.key}" data-sort-target="season" class="${seasonBoxSort===c.key?'sorted':''}">${c.label}${seasonBoxSort===c.key?' ▾':''}</th>`
   ).join('');
   const rows = sortedPlayerRows.map(r => `<tr>
       <td>${escapeHtml(r.name)}</td><td>${r.gp}</td><td>${r.pts}</td><td>${r.ppg.toFixed(1)}</td>
-      <td>${r.pts2}</td><td>${r.pts3}</td><td>${r.ptsFt}</td>
-      <td>${shotCell(r.fgm,r.fga)}</td><td>${shotCell(r.fgm2,r.fga2)}</td><td>${shotCell(r.fgm3,r.fga3)}</td><td>${shotCell(r.ftm,r.fta)}</td>
-      <td>${r.oreb}</td><td>${r.dreb}</td><td>${r.reb}</td><td>${r.ast}</td><td>${r.stl}</td><td>${r.blk}</td>
-      <td>${r.to}</td><td>${r.fouls}</td><td>${fmtClock(r.sec)}</td><td>${fmtClock(r.mpg)}</td><td>${fmtPlusMinus(r.plusMinus)}</td>
+      <td>${r.reb}</td><td>${r.ast}</td><td>${r.stl}</td><td>${r.blk}</td><td>${r.to}</td><td>${r.fouls}</td>
+      <td>${r.fg2pct}%</td><td>${r.fg3pct}%</td><td>${r.ftpct}%</td><td>${fmtClock(r.mpg)}</td><td>${r.plusMinus>=0?'+':''}${r.plusMinus}</td>
     </tr>`).join('');
 
   // Season-wide team vs. all-opponents aggregate, same shape as a single game's totals rows.
@@ -2558,33 +2648,33 @@ async function renderSeason(){
   const seasonOpp = { fgm2:0,fga2:0,fgm3:0,fga3:0,ftm:0,fta:0,oreb:0,dreb:0,ast:0,stl:0,blk:0,to:0,fouls:0 };
   allGames.forEach(g => {
     const ht = aggregateTeamStats(g, true), ot = aggregateTeamStats(g, false);
-    Object.keys(seasonTeam).forEach(k => { seasonTeam[k] += (ht[k]||0); seasonOpp[k] += (ot[k]||0); });
+    Object.keys(seasonTeam).forEach(k => { seasonTeam[k] += ht[k]; seasonOpp[k] += ot[k]; });
   });
   const gpAll = allGames.length;
-  const seasonTotalRow = (label, t, withTopBorder) => {
-    const pts = t.fgm2*2 + t.fgm3*3 + t.ftm;
-    return `<tr style="font-weight:700;${withTopBorder?' border-top:2px solid var(--wood);':''}">
-      <td>${escapeHtml(label)}</td><td>${gpAll}</td><td>${pts}</td><td>${(pts/gpAll).toFixed(1)}</td>
-      <td>${t.fgm2*2}</td><td>${t.fgm3*3}</td><td>${t.ftm}</td>
-      <td>${shotCell(t.fgm2+t.fgm3, t.fga2+t.fga3)}</td><td>${shotCell(t.fgm2,t.fga2)}</td><td>${shotCell(t.fgm3,t.fga3)}</td><td>${shotCell(t.ftm,t.fta)}</td>
-      <td>${t.oreb}</td><td>${t.dreb}</td><td>${t.oreb+t.dreb}</td><td>${t.ast}</td><td>${t.stl}</td><td>${t.blk}</td>
-      <td>${t.to}</td><td>${t.fouls}</td><td>—</td><td>—</td><td>—</td>
+  const seasonTeamPts = seasonTeam.fgm2*2 + seasonTeam.fgm3*3 + seasonTeam.ftm;
+  const seasonOppPts = seasonOpp.fgm2*2 + seasonOpp.fgm3*3 + seasonOpp.ftm;
+  const seasonSummaryRows = gpAll === 0 ? '' : `
+    <tr style="font-weight:700; border-top:2px solid var(--wood);">
+      <td>${escapeHtml(currentTeamName())} Total</td><td>${gpAll}</td><td>${seasonTeamPts}</td><td>${(seasonTeamPts/gpAll).toFixed(1)}</td>
+      <td>${seasonTeam.oreb+seasonTeam.dreb}</td><td>${seasonTeam.ast}</td><td>${seasonTeam.stl}</td><td>${seasonTeam.blk}</td><td>${seasonTeam.to}</td><td>${seasonTeam.fouls}</td>
+      <td>${pct(seasonTeam.fgm2,seasonTeam.fga2)}%</td><td>${pct(seasonTeam.fgm3,seasonTeam.fga3)}%</td><td>${pct(seasonTeam.ftm,seasonTeam.fta)}%</td><td>—</td><td>—</td>
+    </tr>
+    <tr style="font-weight:700;">
+      <td>All Opponents Total</td><td>${gpAll}</td><td>${seasonOppPts}</td><td>${(seasonOppPts/gpAll).toFixed(1)}</td>
+      <td>${seasonOpp.oreb+seasonOpp.dreb}</td><td>${seasonOpp.ast}</td><td>${seasonOpp.stl}</td><td>${seasonOpp.blk}</td><td>${seasonOpp.to}</td><td>${seasonOpp.fouls}</td>
+      <td>${pct(seasonOpp.fgm2,seasonOpp.fga2)}%</td><td>${pct(seasonOpp.fgm3,seasonOpp.fga3)}%</td><td>${pct(seasonOpp.ftm,seasonOpp.fta)}%</td><td>—</td><td>—</td>
     </tr>`;
-  };
-  const seasonSummaryRows = gpAll === 0 ? '' :
-    seasonTotalRow(`${currentTeamName()} Total`, seasonTeam, true) +
-    seasonTotalRow('All Opponents Total', seasonOpp, false);
 
   const excludedCount = gamesIndex.length - allGames.length;
   app.innerHTML = `
-  <div class="card wide-card">
+  <div class="card">
     <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
       <h2>${escapeHtml(currentTeamName())} — season totals</h2>
       <button class="btn secondary" id="shareSeasonBtn" style="flex-shrink:0;">🔗 Share season</button>
     </div>
     ${excludedCount > 0 ? `<div class="section-label" style="margin-top:-0.4rem;">${excludedCount} game${excludedCount===1?'':'s'} excluded from these totals</div>` : ''}
     ${allGames.length===0 ? `<div class="empty"><span class="ball">🏀</span>No games recorded yet this season.</div>` : `
-    <div class="table-wrap"><table class="box-table">
+    <div class="table-wrap"><table>
       <tr>${seasonHeaderCells}</tr>
       ${rows}
       ${seasonSummaryRows}
