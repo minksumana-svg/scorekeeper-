@@ -1504,14 +1504,16 @@ async function init(){
 --------------------------------------------------------------- */
 const ACCESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const ACCESS_THROTTLE_MS = 30 * 60 * 1000;
+// Returns { ok, skipped?, code? } so the Sharing tab can report a blocked write.
 async function recordTeamAccess(teamId){
   const uid = writeUid();
-  if(!uid || !teamId || !navigator.onLine) return;
+  if(!uid || !teamId) return { ok:false, code:'not-signed-in' };
+  if(!navigator.onLine) return { ok:false, code:'offline' };
   const throttleKey = 'sk_access_' + uid + '_' + teamId;
   const now = Date.now();
   try{
     const lastLocal = parseInt(localStorage.getItem(throttleKey) || '0', 10);
-    if(now - lastLocal < ACCESS_THROTTLE_MS) return;
+    if(now - lastLocal < ACCESS_THROTTLE_MS) return { ok:true, skipped:true };
   }catch(e){}
   try{
     const ref = doc(db, 'teams', teamId, 'access', uid);
@@ -1523,8 +1525,10 @@ async function recordTeamAccess(teamId){
       email: currentUser?.email || '', name: currentUser?.displayName || ''
     }, { merge: true });
     try{ localStorage.setItem(throttleKey, String(now)); }catch(e){}
+    return { ok:true };
   }catch(e){
     console.warn('access tracking not recorded (rules not deployed yet?)', e && e.code);
+    return { ok:false, code:(e && (e.code || e.message)) || 'unknown' };
   }
 }
 // Owner-only read of every member's access doc for one team.
@@ -2506,6 +2510,10 @@ async function renderSharing(){
     return;
   }
 
+  // Record this visit first (retrying if the earlier attempt at app-open
+  // failed, e.g. before the access rule was published), so your own row is
+  // never stale when you're looking at it.
+  const recordRes = await recordTeamAccess(activeTeamId);
   // Access info for every owned team, fetched in parallel.
   const accessList = await Promise.all(owned.map(t => loadTeamAccess(t.id)));
   const accessByTeam = {};
@@ -2576,7 +2584,8 @@ async function renderSharing(){
         <button class="btn secondary" data-invite="${escapeAttr(team.id)}" data-role="view">🔗 Invite — view only</button>
       </div>
       <div class="section-label" style="margin-top:0.9rem;">Has access (${memberUids.length + 1})</div>
-      ${access.ok ? '' : `<div class="empty" style="padding:0.3rem 0 0.6rem; text-align:left; font-size:0.75rem;">⚠️ Access history isn't available yet — the Firestore rule for access tracking needs deploying.</div>`}
+      ${access.ok ? '' : `<div class="empty" style="padding:0.3rem 0 0.6rem; text-align:left; font-size:0.75rem;">⚠️ Can't read access history — the Firestore rule for access tracking isn't live yet (or a rule is blocking it).</div>`}
+      ${(team.id === activeTeamId && !recordRes.ok) ? `<div class="empty" style="padding:0.3rem 0 0.6rem; text-align:left; font-size:0.75rem;">⚠️ Couldn't record your visit (${escapeHtml(String(recordRes.code))}).</div>` : ''}
       ${rows.join('')}
     </details>`;
   }).join('');
