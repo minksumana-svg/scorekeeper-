@@ -9,6 +9,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Courtside">
+<meta name="theme-color" content="#1b120c">
+<link rel="manifest" href="manifest.json">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root{
@@ -3413,6 +3415,21 @@ if(bootIsSharedView){
       currentUser = null;
       showAuthGate();
     }
+  });
+}
+
+/* ---------------------------------------------------------------
+   PWA — service worker registration. Deliberately registered with a
+   relative path (not a leading slash) so this keeps working whether the
+   app is served from a domain root or a GitHub Pages project subpath
+   (username.github.io/repo/). Registered after sign-in resolves rather
+   than at the very top of the file, so it can never race or interfere
+   with the signInWithRedirect / getRedirectResult flow above — see
+   service-worker.js for why it also never intercepts auth requests.
+--------------------------------------------------------------- */
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js').catch(e => console.warn('Service worker registration failed', e));
   });
 }
 </script>
