@@ -852,12 +852,59 @@ const FIELD_LABELS = {
   ast:'Assist', stl:'Steal', blk:'Block', to:'Turnover', fouls:'Foul'
 };
 const FIELD_ORDER = Object.keys(FIELD_LABELS);
+// A game's `stats` map only gets an entry per player at the moment the game
+// is created (see newGame below) — built from the roster AS IT EXISTED then.
+// Anyone added to the roster afterward has no slot in any game created
+// before they joined. But the play-by-play editor lets you assign ANY
+// current roster player to a play, and the live Sub In list offers every
+// current roster player too — so it's easy to record activity for someone
+// with nowhere to write it. This lazily creates that slot the first time
+// it's needed, so their stats actually get recorded instead of silently
+// dropped (and so they then show up in every box score, since those are
+// built by iterating the current roster — see computePlayerBoxRows).
+function ensurePlayerStatsSlot(game, playerId){
+  if(!playerId || playerId === 'OPPONENT') return;
+  if(!game.stats) game.stats = {};
+  if(!game.stats[playerId]){
+    game.stats[playerId] = { q1:emptyQuarterStat(), q2:emptyQuarterStat(), q3:emptyQuarterStat(), q4:emptyQuarterStat(), ot:emptyQuarterStat() };
+  }
+}
+// Rebuilds a game's `stats` entirely by replaying its play-by-play log, so
+// any player who appears in the log — even one added to the roster after
+// this game was first created, or reassigned into it later via the editor —
+// ends up with correct, complete stats and a box-score row, instead of
+// having their recorded plays silently dropped (see ensurePlayerStatsSlot
+// above). Run once whenever a game is loaded from storage; pure/idempotent,
+// so it's safe to re-run and nothing needs to be migrated by hand. Each
+// player's on-court `seconds` tally is preserved rather than recomputed
+// here, since that's driven by the live clock tick, not by individual plays.
+function recomputeGameStatsFromPlayLog(game){
+  const oldStats = game.stats || {};
+  const buildSlot = (old) => ({
+    q1:{ ...emptyQuarterStat(), seconds: old?.q1?.seconds || 0 },
+    q2:{ ...emptyQuarterStat(), seconds: old?.q2?.seconds || 0 },
+    q3:{ ...emptyQuarterStat(), seconds: old?.q3?.seconds || 0 },
+    q4:{ ...emptyQuarterStat(), seconds: old?.q4?.seconds || 0 },
+    ot:{ ...emptyQuarterStat(), seconds: old?.ot?.seconds || 0 },
+  });
+  const stats = {};
+  roster.players.forEach(p => { stats[p.id] = buildSlot(oldStats[p.id]); }); // every current roster player gets a (possibly zeroed) row
+  (game.playLog||[]).forEach(play => {
+    if(play.playerId !== 'OPPONENT' && !stats[play.playerId]) stats[play.playerId] = buildSlot(oldStats[play.playerId]); // + anyone the log references who has since left the roster
+  });
+  game.stats = stats;
+  game.oppStats = { q1:emptyQuarterStat(), q2:emptyQuarterStat(), q3:emptyQuarterStat(), q4:emptyQuarterStat(), ot:emptyQuarterStat() };
+  (game.playLog||[]).forEach(play => {
+    if(!isSubPlay(play)) applyPlayEffect(game, play, 1);
+  });
+}
 // Applies (sign=1) or reverses (sign=-1) a play's effect on the stat sheet,
 // including the +/- adjustment for whoever was on court at the time.
 // Shared by recording, editing, and deleting plays so the math can't drift.
 function applyPlayEffect(game, play, sign){
   const q = play.quarter;
   const isOpp = play.playerId === 'OPPONENT';
+  if(!isOpp) ensurePlayerStatsSlot(game, play.playerId);
   const qs = isOpp ? game.oppStats[q] : (game.stats[play.playerId] && game.stats[play.playerId][q]);
   if(!qs) return;
   let scored = 0;
@@ -879,6 +926,7 @@ function applyPlayEffect(game, play, sign){
   if(scored > 0){
     const delta = (isOpp ? -scored : scored) * sign;
     (play.onCourtSnapshot||[]).forEach(pid => {
+      ensurePlayerStatsSlot(game, pid);
       if(game.stats[pid]) game.stats[pid][q].plusMinus += delta;
     });
   }
@@ -1432,7 +1480,10 @@ async function loadGame(id){
   if(id === currentGame?.id) return currentGame;
   if(gameCache[id]) return gameCache[id];
   const g = await loadJSON(gameKey(id), null);
-  if(g) gameCache[id] = g;
+  if(g){
+    recomputeGameStatsFromPlayLog(g); // self-heals any player missing from stats (see ensurePlayerStatsSlot) — safe to run on every load
+    gameCache[id] = g;
+  }
   return g;
 }
 function updateIndexSummaryFor(game){
@@ -1879,6 +1930,7 @@ function renderLive(){
 
   const isOpp = selectedPlayerId === 'OPPONENT';
   const selPlayer = isOpp ? { id:'OPPONENT', name: g.opponent||'Opponent' } : roster.players.find(p => p.id === selectedPlayerId);
+  if(selPlayer && !isOpp) ensurePlayerStatsSlot(g, selPlayer.id); // defensive — covers a player selected before any sub-in/stat path has created their slot
   const selQs = isOpp ? (g.oppStats[q] || emptyQuarterStat()) : (selPlayer ? g.stats[selPlayer.id][q] : null);
   const lastPlayForSel = (g.playLog||[]).slice().reverse().find(p => p.playerId === selectedPlayerId && !isSubPlay(p));
 
@@ -2390,6 +2442,7 @@ async function renderGameDetail(gameId){
         // Subs can be reassigned to a different player, and now the time
         // they happened at can be edited too (blank = auto midpoint).
         const newPlayerId = row.querySelector('[data-edit-sub-player]').value;
+        ensurePlayerStatsSlot(g, newPlayerId);
         play.playerId = newPlayerId;
         play.playerName = roster.players.find(p=>p.id===newPlayerId)?.name || 'Player';
         const prevSameQ = prevPlay && prevPlay.quarter === play.quarter ? prevPlay.clockAtPlay : null;
@@ -3013,6 +3066,7 @@ function attachHandlers(){
       // the outgoing one off. Stat recording itself is what's blocked
       // until exactly 5 are on court again (see the [data-field] handler).
       const pid = btn.dataset.subIn;
+      ensurePlayerStatsSlot(currentGame, pid); // covers a player added to the roster after this game started
       currentGame.onCourt.push(pid);
       logSubPlay(currentGame, pid, 'sub_in');
       queueSaveGame();
@@ -3117,6 +3171,7 @@ function attachHandlers(){
         // they happened at can be edited too (blank = auto midpoint).
         const oldPlayerId = play.playerId;
         const newPlayerId = row.querySelector('[data-edit-sub-player]').value;
+        ensurePlayerStatsSlot(currentGame, newPlayerId);
         play.playerId = newPlayerId;
         play.playerName = roster.players.find(p=>p.id===newPlayerId)?.name || 'Player';
         const prevSameQ = prevPlay && prevPlay.quarter === play.quarter ? prevPlay.clockAtPlay : null;
