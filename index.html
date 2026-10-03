@@ -898,7 +898,11 @@ function playLogHtml(game, readOnly){
   });
 
   const typeOptions = [`<option value="all">All types</option>`]
-    .concat(FIELD_ORDER.map(f => `<option value="${f}" ${playLogSearchType===f?'selected':''}>${FIELD_LABELS[f]}</option>`)).join('');
+    .concat(FIELD_ORDER.map(f => `<option value="${f}" ${playLogSearchType===f?'selected':''}>${FIELD_LABELS[f]}</option>`))
+    .concat([
+      `<option value="sub_in" ${playLogSearchType==='sub_in'?'selected':''}>Sub In</option>`,
+      `<option value="sub_out" ${playLogSearchType==='sub_out'?'selected':''}>Sub Out</option>`
+    ]).join('');
   const searchBar = `
   <div class="row" style="margin-bottom:0.6rem;">
     <input type="text" id="playLogSearchInput" placeholder="Search by player name…" value="${escapeAttr(playLogSearchText)}">
@@ -920,6 +924,7 @@ function playLogHtml(game, readOnly){
           <div class="play-edit-grid" style="grid-template-columns:1fr;">
             <select data-edit-sub-player>${subPlayerOptions}</select>
           </div>
+          <input type="text" data-edit-time placeholder="MM:SS (blank = auto midpoint)" value="${play.clockAtPlay!=null ? fmtClock(play.clockAtPlay) : ''}" style="margin-bottom:0;">
           <div class="play-actions">
             <button class="btn secondary" data-save-play="${play.id}">Save</button>
             <button class="backlink" data-cancel-play="${play.id}">Cancel</button>
@@ -953,6 +958,7 @@ function playLogHtml(game, readOnly){
           <select data-edit-play-player>${playerOptions}</select>
           <select data-edit-field>${fieldOptions}</select>
         </div>
+        <input type="text" data-edit-time placeholder="MM:SS (blank = auto midpoint)" value="${play.clockAtPlay!=null ? fmtClock(play.clockAtPlay) : ''}" style="margin-bottom:0;">
         <div class="play-actions">
           <button class="btn secondary" data-save-play="${play.id}">Save</button>
           <button class="backlink" data-cancel-play="${play.id}">Cancel</button>
@@ -1019,6 +1025,29 @@ function logSubPlay(game, playerId, field){
     clockAtPlay: game.quarterRemaining[game.currentQuarter],
     ts: Date.now()
   });
+}
+// Parses a user-entered "MM:SS" clock edit into seconds-remaining, or null
+// if the field was left blank (meaning: auto-calculate instead) or doesn't
+// match the expected format.
+function parseClockInput(str){
+  const trimmed = (str||'').trim();
+  if(!trimmed) return null;
+  const m = trimmed.match(/^(\d{1,3}):([0-5]?\d)$/);
+  if(!m) return null;
+  return parseInt(m[1])*60 + parseInt(m[2]);
+}
+// When a play-by-play entry's time is left blank while editing, its new
+// clockAtPlay is the midpoint between its chronological neighbors' times —
+// but only counting a neighbor that's in the SAME quarter as this play is
+// being saved into; a neighbor in a different quarter doesn't bound it.
+// With only one same-quarter neighbor, nudges a tick away from it; with
+// neither, falls back to the halfway point of the quarter itself.
+function autoClockForQuarter(game, quarter, prevSameQClock, nextSameQClock){
+  const qLen = quarter === 'ot' ? (game.otLengthSec||0) : (game.quarterLengthSec||0);
+  if(prevSameQClock != null && nextSameQClock != null) return Math.round((prevSameQClock + nextSameQClock) / 2);
+  if(prevSameQClock != null) return Math.max(0, prevSameQClock - 1);
+  if(nextSameQClock != null) return Math.min(qLen, nextSameQClock + 1);
+  return Math.round(qLen / 2);
 }
 // Builds a new play to sit immediately after `belowPlay` in the chronological
 // playLog array (i.e. immediately ABOVE it in the reversed, newest-first
@@ -2347,13 +2376,20 @@ async function renderGameDetail(gameId){
       const play = (g.playLog||[]).find(p => p.id === id);
       if(!play){ editingPlayId = null; renderGameDetail(g.id); return; }
       const row = btn.closest('.play-row');
+      const idx = (g.playLog||[]).findIndex(p => p.id === id);
+      const prevPlay = idx > 0 ? g.playLog[idx-1] : null;
+      const nextPlay = idx >= 0 && idx < g.playLog.length-1 ? g.playLog[idx+1] : null;
+      const timeInputVal = row.querySelector('[data-edit-time]')?.value;
+      const parsedTime = parseClockInput(timeInputVal);
       if(isSubPlay(play)){
-        // Subs can only be reassigned to a different player — the
-        // timestamp/quarter they happened at isn't editable, and they have
-        // no stat effect to reverse/reapply.
+        // Subs can be reassigned to a different player, and now the time
+        // they happened at can be edited too (blank = auto midpoint).
         const newPlayerId = row.querySelector('[data-edit-sub-player]').value;
         play.playerId = newPlayerId;
         play.playerName = roster.players.find(p=>p.id===newPlayerId)?.name || 'Player';
+        const prevSameQ = prevPlay && prevPlay.quarter === play.quarter ? prevPlay.clockAtPlay : null;
+        const nextSameQ = nextPlay && nextPlay.quarter === play.quarter ? nextPlay.clockAtPlay : null;
+        play.clockAtPlay = parsedTime != null ? parsedTime : autoClockForQuarter(g, play.quarter, prevSameQ, nextSameQ);
       } else {
         const newQ = row.querySelector('[data-edit-quarter]').value;
         const newPlayerId = row.querySelector('[data-edit-play-player]').value;
@@ -2363,6 +2399,9 @@ async function renderGameDetail(gameId){
         play.playerId = newPlayerId;
         play.playerName = newPlayerId === 'OPPONENT' ? (g.opponent||'Opponent') : (roster.players.find(p=>p.id===newPlayerId)?.name || 'Player');
         play.field = newField;
+        const prevSameQ = prevPlay && prevPlay.quarter === newQ ? prevPlay.clockAtPlay : null;
+        const nextSameQ = nextPlay && nextPlay.quarter === newQ ? nextPlay.clockAtPlay : null;
+        play.clockAtPlay = parsedTime != null ? parsedTime : autoClockForQuarter(g, newQ, prevSameQ, nextSameQ);
         applyPlayEffect(g, play, 1);
       }
       if(id === insertedPlayId) insertedPlayId = null;
@@ -3062,14 +3101,21 @@ function attachHandlers(){
       const play = (currentGame.playLog||[]).find(p => p.id === id);
       if(!play){ editingPlayId = null; render(); return; }
       const row = btn.closest('.play-row');
+      const idx = (currentGame.playLog||[]).findIndex(p => p.id === id);
+      const prevPlay = idx > 0 ? currentGame.playLog[idx-1] : null;
+      const nextPlay = idx >= 0 && idx < currentGame.playLog.length-1 ? currentGame.playLog[idx+1] : null;
+      const timeInputVal = row.querySelector('[data-edit-time]')?.value;
+      const parsedTime = parseClockInput(timeInputVal);
       if(isSubPlay(play)){
-        // Subs can only be reassigned to a different player — the
-        // timestamp/quarter they happened at isn't editable, and they have
-        // no stat effect to reverse/reapply.
+        // Subs can be reassigned to a different player, and now the time
+        // they happened at can be edited too (blank = auto midpoint).
         const oldPlayerId = play.playerId;
         const newPlayerId = row.querySelector('[data-edit-sub-player]').value;
         play.playerId = newPlayerId;
         play.playerName = roster.players.find(p=>p.id===newPlayerId)?.name || 'Player';
+        const prevSameQ = prevPlay && prevPlay.quarter === play.quarter ? prevPlay.clockAtPlay : null;
+        const nextSameQ = nextPlay && nextPlay.quarter === play.quarter ? nextPlay.clockAtPlay : null;
+        play.clockAtPlay = parsedTime != null ? parsedTime : autoClockForQuarter(currentGame, play.quarter, prevSameQ, nextSameQ);
         // Keep who's actually on court in sync with the correction, but
         // only when the live state still matches what this play originally
         // did (avoids scrambling onCourt if other subs happened since).
@@ -3088,6 +3134,9 @@ function attachHandlers(){
         play.playerId = newPlayerId;
         play.playerName = newPlayerId === 'OPPONENT' ? (currentGame.opponent||'Opponent') : (roster.players.find(p=>p.id===newPlayerId)?.name || 'Player');
         play.field = newField;
+        const prevSameQ = prevPlay && prevPlay.quarter === newQ ? prevPlay.clockAtPlay : null;
+        const nextSameQ = nextPlay && nextPlay.quarter === newQ ? nextPlay.clockAtPlay : null;
+        play.clockAtPlay = parsedTime != null ? parsedTime : autoClockForQuarter(currentGame, newQ, prevSameQ, nextSameQ);
         applyPlayEffect(currentGame, play, 1); // apply new effect
       }
       if(id === insertedPlayId) insertedPlayId = null;
