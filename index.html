@@ -949,7 +949,12 @@ function playLogHtml(game, readOnly){
     if(!readOnly && editingPlayId === play.id){
       const playerOptions = [`<option value="OPPONENT" ${play.playerId==='OPPONENT'?'selected':''}>${escapeHtml(game.opponent||'Opponent')} (team)</option>`]
         .concat(roster.players.map(p=>`<option value="${escapeAttr(p.id)}" ${play.playerId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`)).join('');
-      const fieldOptions = FIELD_ORDER.map(f=>`<option value="${f}" ${play.field===f?'selected':''}>${FIELD_LABELS[f]}</option>`).join('');
+      const fieldOptions = `<optgroup label="Stat">`
+        + FIELD_ORDER.map(f=>`<option value="${f}" ${play.field===f?'selected':''}>${FIELD_LABELS[f]}</option>`).join('')
+        + `</optgroup><optgroup label="Substitution">`
+        + `<option value="sub_in" ${play.field==='sub_in'?'selected':''}>Sub In</option>`
+        + `<option value="sub_out" ${play.field==='sub_out'?'selected':''}>Sub Out</option>`
+        + `</optgroup>`;
       const qOptions = QUARTERS.map(q=>`<option value="${q}" ${play.quarter===q?'selected':''}>${QLABELS[q]}</option>`).join('');
       return `
       <div class="play-row editing" data-play-id="${play.id}">
@@ -2394,7 +2399,8 @@ async function renderGameDetail(gameId){
         const newQ = row.querySelector('[data-edit-quarter]').value;
         const newPlayerId = row.querySelector('[data-edit-play-player]').value;
         const newField = row.querySelector('[data-edit-field]').value;
-        applyPlayEffect(g, play, -1);
+        const willBeSub = newField === 'sub_in' || newField === 'sub_out';
+        applyPlayEffect(g, play, -1); // undo the old stat effect (this branch's play always started as a stat play)
         play.quarter = newQ;
         play.playerId = newPlayerId;
         play.playerName = newPlayerId === 'OPPONENT' ? (g.opponent||'Opponent') : (roster.players.find(p=>p.id===newPlayerId)?.name || 'Player');
@@ -2402,7 +2408,7 @@ async function renderGameDetail(gameId){
         const prevSameQ = prevPlay && prevPlay.quarter === newQ ? prevPlay.clockAtPlay : null;
         const nextSameQ = nextPlay && nextPlay.quarter === newQ ? nextPlay.clockAtPlay : null;
         play.clockAtPlay = parsedTime != null ? parsedTime : autoClockForQuarter(g, newQ, prevSameQ, nextSameQ);
-        applyPlayEffect(g, play, 1);
+        if(!willBeSub) applyPlayEffect(g, play, 1); // subs have no stat effect to apply
       }
       if(id === insertedPlayId) insertedPlayId = null;
       editingPlayId = null;
@@ -3129,7 +3135,8 @@ function attachHandlers(){
         const newQ = row.querySelector('[data-edit-quarter]').value;
         const newPlayerId = row.querySelector('[data-edit-play-player]').value;
         const newField = row.querySelector('[data-edit-field]').value;
-        applyPlayEffect(currentGame, play, -1); // undo old effect
+        const willBeSub = newField === 'sub_in' || newField === 'sub_out';
+        applyPlayEffect(currentGame, play, -1); // undo old effect (this branch's play always started as a stat play)
         play.quarter = newQ;
         play.playerId = newPlayerId;
         play.playerName = newPlayerId === 'OPPONENT' ? (currentGame.opponent||'Opponent') : (roster.players.find(p=>p.id===newPlayerId)?.name || 'Player');
@@ -3137,7 +3144,7 @@ function attachHandlers(){
         const prevSameQ = prevPlay && prevPlay.quarter === newQ ? prevPlay.clockAtPlay : null;
         const nextSameQ = nextPlay && nextPlay.quarter === newQ ? nextPlay.clockAtPlay : null;
         play.clockAtPlay = parsedTime != null ? parsedTime : autoClockForQuarter(currentGame, newQ, prevSameQ, nextSameQ);
-        applyPlayEffect(currentGame, play, 1); // apply new effect
+        if(!willBeSub) applyPlayEffect(currentGame, play, 1); // subs have no stat effect to apply; onCourt isn't touched — this just corrects the log, matching "insert above" being for historical record fixes
       }
       if(id === insertedPlayId) insertedPlayId = null;
       editingPlayId = null;
